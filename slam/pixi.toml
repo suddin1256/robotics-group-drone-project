@@ -1,5 +1,4 @@
 [workspace]
-authors = ["suddin1256 <suddin1256@gmail.com>"]
 channels = ["https://prefix.dev/conda-forge"]
 name = "tello-slam"
 platforms = ["osx-64"]

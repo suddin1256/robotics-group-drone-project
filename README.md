@@ -1,4 +1,4 @@
-# Tello ROS 2 + visual SLAM prototype
+# Tello ROS 2 + visual SLAM flight prototype
 
 Original Ryze Tello, ROS 2 Jazzy, Stella VSLAM and a local browser dashboard.
 Working flight prototype; experimental sparse mapping. No autonomous navigation or collision avoidance is implemented.
@@ -64,7 +64,7 @@ Recorded household video is intentionally excluded from Git; share a suitable sa
 - `scripts/`: calibration/diagnostic tools preserved from the prototype. These still need path/config cleanup before use.
 - `runtime/`, `logs/`, `build/`, `local/`, `vendor/`: generated, excluded from Git.
 
-See `docs/architecture.md` and `docs/roadmap.md` before adding automation.
+See `CONTRIBUTING.md` for branches and updates, and `docs/architecture.md` and `docs/roadmap.md` before adding automation.
 Run `python3 -m unittest discover -s tests` for launcher safeguards.
 
 No project license has been selected yet. Dependencies retain their respective upstream licenses; review them before redistribution. No dependency source or binary is committed here.
