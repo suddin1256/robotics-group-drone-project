@@ -1,0 +1,284 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tello live SLAM</title>
+<style>
+body{margin:0;padding:20px;background:#101827;color:#eee;font:16px system-ui}
+section{display:flex;flex-wrap:wrap;gap:20px}
+img{width:480px;max-width:100%;background:#182438}
+canvas{width:100%;height:55vh;background:#142035;touch-action:none}
+button{padding:8px}
+body.low-battery{background:#650f19}
+body.low-battery canvas{background:#390d15}
+body.low-battery h2{color:#fff}
+#pad{padding:15px;border:2px solid #748298;margin:16px 0}
+#pad:focus{outline:none}
+button{color:white;background:#414d63;border:0;border-radius:6px;
+padding:10px;margin:3px;cursor:pointer}
+pre{white-space:pre-wrap}
+</style>
+<h2>Tello — live visual SLAM</h2>
+<p id="status">Waiting for SLAM data…</p>
+<section>
+<div><h3>Live camera</h3>
+<img id="smooth" alt="Waiting for live video">
+<p id="videoStatus">Waiting for video…</p>
+<pre id="telemetry">Waiting for telemetry…</pre></div>
+<div><h3>SLAM camera preview</h3><img id="camera" alt="Waiting for camera preview"></div>
+<div><p>Flight dashboard · Controls start OFF</p>
+<p>Blue: landmarks · Orange: camera keyframe positions</p>
+<p>Drag to rotate · Scroll to zoom · Scale is arbitrary</p>
+<p>Preview and map refresh approximately once per second.</p>
+<button onclick="yaw=0;pitch=0;zoom=1;draw()">Reset view</button>
+</div>
+</section>
+
+<section id="pad" tabindex="0">
+<div>
+<h3>Flight controls</h3>
+<button id="controlToggle" onclick="setControls(!controlsEnabled)">
+Controls OFF — click to enable</button>
+<p>
+<button onclick="chooseMode('slow')">Slow · 20</button>
+<button onclick="chooseMode('normal')">Normal · 35</button>
+<button onclick="chooseMode('fast')">Fast · native fast mode</button>
+<button onclick="chooseMode('descent')">Descent assist</button>
+</p>
+<p id="selectedMode">Selected mode: slow</p>
+<p>
+<button onclick="requestAction('toggle_flight')">Arm motors · T</button>
+<button onclick="requestAction('stop')">Hover / manual · Space</button>
+<button onclick="requestAction('land')">Land · L</button>
+</p>
+<p>W/S: up/down · A/D: yaw · Arrows: move horizontally</p>
+<p>During descent assist: W pauses descent; S descends faster.</p>
+<pre id="inputStatus">Controls inactive</pre>
+<pre id="flightStatus">Waiting for flight-driver status.</pre>
+</div>
+</section>
+
+<canvas id="view"></canvas>
+<script>
+const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
+let points=[],cameras=[],center=[0,0,0],radius=1;
+let yaw=0,pitch=0,zoom=1,drag=false,px=0,py=0;
+function project(p){
+ const a=p.map((v,i)=>(v-center[i])/radius);
+ const x=a[0]*Math.cos(yaw)+a[2]*Math.sin(yaw);
+ const z=-a[0]*Math.sin(yaw)+a[2]*Math.cos(yaw);
+ const y=a[1]*Math.cos(pitch)-z*Math.sin(pitch);
+ const s=Math.min(canvas.width,canvas.height)*0.36*zoom;
+ return [canvas.width/2+x*s,canvas.height/2+y*s];
+}
+function draw(){
+ canvas.width=Math.round(canvas.clientWidth*devicePixelRatio);
+ canvas.height=Math.round(canvas.clientHeight*devicePixelRatio);
+ ctx.fillStyle='#70caff';
+ for(const p of points.map(project)){
+  ctx.beginPath();ctx.arc(p[0],p[1],2*devicePixelRatio,0,Math.PI*2);ctx.fill();
+ }
+ ctx.fillStyle='#ffad52';
+ for(const p of cameras.map(project)){
+  ctx.beginPath();ctx.arc(p[0],p[1],3*devicePixelRatio,0,Math.PI*2);ctx.fill();
+ }
+}
+async function refresh(){
+ try{
+  const response=await fetch('map.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('Waiting for map');
+  const data=await response.json();
+  points=data.points;cameras=data.cameras;
+  const age=Math.max(0,Date.now()/1000-data.timestamp);
+  document.getElementById('status').textContent=
+   `${age>3?'STALE — ':''}${data.state} | ${cameras.length} keyframes | `+
+   `${points.length} landmarks | Last frame ${age.toFixed(1)} seconds ago`;
+  if(points.length){
+   center=[0,1,2].map(i=>{
+    const values=points.map(p=>p[i]).sort((a,b)=>a-b);
+    return values[Math.floor(values.length/2)];
+   });
+   const distances=points.map(p=>Math.hypot(...p.map((v,i)=>v-center[i])))
+                         .sort((a,b)=>a-b);
+   radius=Math.max(distances[Math.floor(distances.length*0.95)],0.001);
+  }
+  document.getElementById('camera').src='preview.jpg?t='+Date.now();
+  draw();
+ }catch(error){
+  document.getElementById('status').textContent=
+   'Waiting for live/map.json — start the SLAM reader.';
+ }
+ setTimeout(refresh,1000);
+}
+canvas.onpointerdown=e=>{
+ drag=true;px=e.clientX;py=e.clientY;canvas.setPointerCapture(e.pointerId);
+};
+canvas.onpointermove=e=>{
+ if(!drag)return;
+ yaw+=(e.clientX-px)*0.008;pitch+=(e.clientY-py)*0.008;
+ px=e.clientX;py=e.clientY;draw();
+};
+canvas.onpointerup=canvas.onpointercancel=()=>drag=false;
+canvas.addEventListener('wheel',e=>{
+ e.preventDefault();
+ zoom=Math.max(0.05,Math.min(20,zoom*Math.exp(-e.deltaY*0.001)));
+ draw();
+},{passive:false});
+
+const smooth=document.getElementById('smooth');
+const videoStatus=document.getElementById('videoStatus');
+function nextVideo(){
+ smooth.src='video.jpg?t='+Date.now();
+}
+smooth.onload=()=>{
+ videoStatus.textContent='Video file received — check telemetry freshness below';
+ setTimeout(nextVideo,100);
+};
+smooth.onerror=()=>{
+ videoStatus.textContent='Waiting for video';
+ setTimeout(nextVideo,1000);
+};
+async function updateTelemetry(){
+ try{
+  const response=await fetch('telemetry.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('No telemetry');
+  const data=await response.json(),s=data.state;
+  const age=Math.max(0,Date.now()/1000-data.received_stamp_ns/1e9);
+  const lowBattery=Number.isFinite(s.bat) && s.bat<=40;
+  document.body.classList.toggle('low-battery',lowBattery);
+  document.getElementById('telemetry').textContent=
+   `${age>3?'STALE — ':''}Telemetry age: ${age.toFixed(1)} s\n`+
+   `${lowBattery?'LOW BATTERY — '+s.bat+'%\n':''}`+
+   `Height: ${s.h} cm | Downward distance: ${s.tof} cm\n`+
+   `Velocity components (reported): ${s.vgx}, ${s.vgy}, ${s.vgz}\n\n`+
+   `All exposed state fields:\n`+
+   Object.entries(s).map(([key,value])=>`${key}: ${value}`).join('\n');
+ }catch(error){
+  document.getElementById('telemetry').textContent='Waiting for telemetry';
+ }
+ setTimeout(updateTelemetry,1000);
+}
+nextVideo();updateTelemetry();
+window.onresize=draw;refresh();
+
+</script>
+
+<script>
+
+const pad=document.getElementById('pad');
+const inputStatus=document.getElementById('inputStatus');
+const held=new Set(),blocked=new Set();
+const movement=new Set(['w','s','a','d','ArrowUp','ArrowDown',
+                        'ArrowLeft','ArrowRight']);
+let busy=false,controlsEnabled=false,selectedMode='slow';
+function active(){
+ return document.hasFocus() && controlsEnabled;
+}
+async function send(action=null){
+ const response=await fetch('/input',{
+  method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({
+      keys:active()?[...held]:[],action,
+      enabled:active(),mode:selectedMode
+    })
+ });
+ if(!response.ok)throw Error('Input request failed');
+}
+function stop(){
+ held.clear();
+ inputStatus.textContent='Stopped — zero movement requested';
+ send('stop').catch(()=>{inputStatus.textContent='Connection lost';});
+}
+pad.onclick=()=>pad.focus();
+window.onkeydown=e=>{
+ if(!active())return;
+ const key=e.key.length===1?e.key.toLowerCase():e.key;
+ if(!movement.has(key)&&![' ','t','l'].includes(key))return;
+ e.preventDefault();
+ if(e.repeat)return;
+ if(key===' '){
+  for(const k of held)blocked.add(k);
+  stop();
+ }else if(key==='t'||key==='l'){
+  for(const k of held)blocked.add(k);
+  held.clear();
+  send(key==='t'?'toggle_flight':'land').catch(()=>{
+   inputStatus.textContent='Connection lost';
+  });
+  inputStatus.textContent='LIVE CONTROL: '+(key==='t'?'motor-arm request':'land request');
+ }else if(!blocked.has(key)){
+  held.add(key);
+ }
+};
+window.addEventListener('keyup',e=>{
+ const key=e.key.length===1?e.key.toLowerCase():e.key;
+ held.delete(key);blocked.delete(key);
+});
+
+window.addEventListener('blur',()=>setControls(false));
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden)setControls(false);
+});
+setInterval(async()=>{
+ if(!active()||busy)return;
+ busy=true;
+ try{
+  await send();
+  inputStatus.textContent='LIVE CONTROL — held keys: '+([...held].join(', ')||'none');
+ }catch(error){
+  held.clear();
+  inputStatus.textContent='Connection lost — release keys and refocus';
+ }finally{busy=false;}
+},100);
+
+function setControls(enabled){
+ controlsEnabled=enabled;
+ held.clear();
+ blocked.clear();
+ document.getElementById('controlToggle').textContent=
+  enabled?'Controls ON — click to disable':'Controls OFF — click to enable';
+ document.getElementById('controlToggle').style.background=
+  enabled?'#23845b':'#414d63';
+ if(enabled){
+  pad.focus();
+  send().catch(()=>{inputStatus.textContent='Connection lost';});
+ }else{
+  stop();
+ }
+}
+function chooseMode(mode){
+ selectedMode=mode;
+ held.clear();
+ document.getElementById('selectedMode').textContent='Selected mode: '+mode;
+ send().catch(()=>{inputStatus.textContent='Connection lost';});
+}
+function requestAction(action){
+ if(action==='toggle_flight'&&!active()){
+  inputStatus.textContent='Enable controls before requesting motor arming.';
+  return;
+ }
+ held.clear();
+ send(action).catch(()=>{inputStatus.textContent='Connection lost';});
+}
+async function refreshControl(){
+ try{
+  const response=await fetch('control.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('Waiting');
+  const data=await response.json();
+  if(!data.stamp_ns)throw Error('Waiting');
+  const age=Math.max(0,Date.now()/1000-data.stamp_ns/1e9);
+  document.getElementById('flightStatus').textContent=
+   `${age>2?'STALE — ':''}${data.phase} | Driver mode: ${data.mode} | `+
+   `Battery descent: ${data.descent_assist?'ACTIVE':'off'} | `+
+   `Control input: ${data.input_active?'active':'inactive'}\n`+
+   `Commanded RC [slide, forward, up, yaw]: ${data.commanded_rc.join(', ')}\n`+
+   `Native fast flag requested: ${data.native_fast_requested?'ON':'OFF'}\n`+
+   `Desired hover above table: 91 cm — automatic height limit OFF`;
+ }catch(error){
+  document.getElementById('flightStatus').textContent=
+   'Waiting for flight-driver status.';
+ }
+ setTimeout(refreshControl,300);
+}
+refreshControl();
+
+</script>

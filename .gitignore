@@ -1,0 +1,13 @@
+.pixi/
+__pycache__/
+*.pyc
+/build/
+/local/
+/vendor/
+/runtime/
+/logs/
+*.avi
+*.mp4
+*.msg
+orb_vocab.fbow
+.DS_Store

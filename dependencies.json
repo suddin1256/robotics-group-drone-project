@@ -1,0 +1,14 @@
+{
+  "g2o": {
+    "url": "https://github.com/RainerKuemmerle/g2o.git",
+    "commit": "e8df2004e07ea8f5b8e6a8b9f2dc067b45b45036"
+  },
+  "stella_vslam": {
+    "url": "https://github.com/stella-cv/stella_vslam.git",
+    "commit": "e445b5452535e781fdf6777ec33a06f5f8f5e416"
+  },
+  "tellopy": {
+    "url": "https://github.com/hanyazou/TelloPy.git",
+    "commit": "47f02a4749cb5d3f41ef83cffeaeba9a3c776e71"
+  }
+}

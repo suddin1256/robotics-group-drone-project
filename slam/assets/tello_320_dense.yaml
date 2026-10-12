@@ -1,0 +1,27 @@
+Camera:
+  name: Tello_320
+  setup: monocular
+  model: perspective
+  fx: 308.1441842
+  fy: 310.03603888
+  cx: 152.73032262
+  cy: 139.18496426
+  k1: 0.05784031
+  k2: -0.40185596
+  p1: 0.01793044
+  p2: -0.00400204
+  k3: 0.82094307
+  fps: 15.0
+  cols: 320
+  rows: 240
+  color_order: BGR
+
+Feature:
+  name: default_ORB
+  scale_factor: 1.2
+  num_levels: 8
+  ini_fast_threshold: 20
+  min_fast_threshold: 7
+
+Preprocessing:
+  min_size: 10
