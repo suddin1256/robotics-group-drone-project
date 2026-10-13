@@ -65,4 +65,4 @@ python3 start.py --replay /absolute/path/to/video.avi
 See `CONTRIBUTING.md` for branches and updates, and `docs/architecture.md` and `docs/roadmap.md` before adding automation.
 Run `python3 -m unittest discover -s tests` for launcher safeguards.
 
-No project license has been selected yet. Dependencies retain their respective upstream licenses; review them before redistribution. No dependency source or binary is committed here.
+
