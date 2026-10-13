@@ -36,7 +36,7 @@ On the existing Mac:
 python3 start.py --reuse-existing --replay /absolute/path/to/video.avi
 ```
 
-Replay never imports a drone control library and cannot enable flight. It publishes recorded images and explicitly synthetic telemetry; keyboard commands update mock state only. Commands do not change the replay camera view. Restart SLAM when looping the recording breaks tracking.
+Replay never imports a drone control library and cannot enable flight. It publishes recorded images and synthetic telemetry; keyboard commands update mock state only. Commands do not change the replay camera view. Restart SLAM when looping the recording breaks tracking.
 Use `--no-slam` for camera/dashboard work without a compiled SLAM dependency.
 
 ## New teammate setup
@@ -49,9 +49,7 @@ python3 setup.py
 python3 start.py --replay /absolute/path/to/video.avi
 ```
 
-Setup installs locked environments, fetches pinned TelloPy/g2o/Stella revisions, builds with two jobs, and downloads the ORB vocabulary. This clean setup recipe has **not yet been tested on a fresh machine**. The original prototype needed native build troubleshooting, so treat first-clone setup as the next verification milestone. TelloPy is explicitly installed by setup rather than included in the Pixi lock.
-The ORB vocabulary download is not checksum pinned yet.
-Recorded household video is intentionally excluded from Git; share a suitable sample separately.
+
 
 ## Layout and team ownership
 
