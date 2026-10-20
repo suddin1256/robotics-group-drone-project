@@ -32,6 +32,39 @@ pre{white-space:pre-wrap}
 </div>
 </section>
 
+<section style="display:block;margin:20px 0">
+<h3>Teammate vision V4: segmentation + relative depth</h3>
+<p>Read-only experiment. Scores are not measured distances. Processing may lag behind live video.</p>
+<img id="visionPreview" style="width:960px;max-width:100%;display:none" alt="Vision output">
+<pre id="visionStatus">Vision disabled. Start with --vision after model preparation.</pre>
+</section>
+<script>
+let visionStamp=0;
+async function updateVision(){
+ const status=document.getElementById('visionStatus');
+ const image=document.getElementById('visionPreview');
+ try{
+  const response=await fetch('/vision-status.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('disabled');
+  const data=await response.json();
+  const age=data.output_stamp_ns?Math.max(0,Date.now()/1000-data.output_stamp_ns/1e9):null;
+  const heartbeat=Date.now()/1000-data.stamp_ns/1e9;
+  status.textContent=`${heartbeat>15?'STATUS MAY BE STALE | ':''}${data.state}: ${data.message}`+
+   (age===null?'':`\nDisplayed source frame age: ${age.toFixed(1)}s`)+
+   (data.inference_seconds?` | Inference: ${data.inference_seconds.toFixed(2)}s/frame | Objects: ${data.objects}`:'')+
+   '\nProximity labels stay UNKNOWN unless the reference object is explicitly confirmed.';
+  image.style.opacity='1';
+  if(data.output_stamp_ns&&data.output_stamp_ns!==visionStamp){
+   visionStamp=data.output_stamp_ns;
+   image.onload=()=>{image.style.display='block';};
+   image.src='/vision.jpg?t='+Date.now();
+  }
+ }catch(error){status.textContent='Vision disabled or not started. Use --vision after model preparation.';}
+ setTimeout(updateVision,1000);
+}
+updateVision();
+</script>
+
 <section id="pad" tabindex="0">
 <div>
 <h3>Flight controls</h3>

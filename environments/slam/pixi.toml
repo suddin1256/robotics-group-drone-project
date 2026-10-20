@@ -1,0 +1,21 @@
+[workspace]
+name = "tello-team-slam"
+version = "0.2.0"
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["osx-64", "osx-arm64", "linux-64"]
+
+[dependencies]
+python = "3.12.*"
+cmake = ">=3.24,<4"
+ninja = "*"
+pkg-config = "*"
+cxx-compiler = "*"
+eigen = ">=3.3,<4"
+opencv = ">=4.8,<5"
+yaml-cpp = ">=0.8,<0.9"
+suitesparse = ">=7,<8"
+sqlite = "*"
+llvm-openmp = "*"
+spdlog = ">=1.12,<1.13"
+fmt = ">=10,<11"
+msgpack-python = ">=1,<2"

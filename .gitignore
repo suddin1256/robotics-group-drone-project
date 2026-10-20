@@ -11,3 +11,12 @@ __pycache__/
 *.msg
 orb_vocab.fbow
 .DS_Store
+vision/.venv/
+vision/models/
+vision/.cache/
+.local/
+.tools/
+.cache/
+.tmp/
+*.bak
+environments/**/.pixi/

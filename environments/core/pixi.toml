@@ -1,0 +1,17 @@
+[workspace]
+name = "tello-team-core"
+version = "0.2.0"
+channels = ["https://prefix.dev/robostack-jazzy", "https://prefix.dev/conda-forge"]
+platforms = ["osx-64", "osx-arm64", "linux-64"]
+
+[dependencies]
+python = "3.12.*"
+ros-jazzy-ros-base = "*"
+ros-jazzy-cv-bridge = "*"
+av = ">=12,<20"
+pillow = ">=10,<13"
+numpy = ">=1.26,<3"
+pip = "*"
+
+[tasks]
+check = "python -c 'import rclpy, cv2, av, numpy; from cv_bridge import CvBridge; print(\"ROS/video imports OK\")'"

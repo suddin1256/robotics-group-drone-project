@@ -32,7 +32,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = control_status.encode()
             content_type = "application/json"
         elif path in {
-            "/video.jpg", "/preview.jpg", "/map.json", "/telemetry.json"
+            "/video.jpg", "/preview.jpg", "/map.json", "/telemetry.json",
+            "/vision.jpg", "/vision-status.json"
         }:
             try:
                 body = (live_folder / path[1:]).read_bytes()

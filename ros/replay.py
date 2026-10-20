@@ -1,6 +1,7 @@
 """Recorded camera input plus a mock flight driver; never imports a drone library."""
 import argparse, json, time
 import cv2
+import numpy as np
 from cv_bridge import CvBridge
 import rclpy
 from rclpy.node import Node
@@ -8,10 +9,26 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+class DemoCapture:
+    """Procedural moving pattern: plumbing demo only, not real sensor data."""
+    def __init__(self): self.index = 0
+    def isOpened(self): return True
+    def release(self): pass
+    def read(self):
+        self.index += 1
+        frame = np.full((240, 320, 3), 30, dtype=np.uint8)
+        for y in range(0, 240, 30): cv2.line(frame, (0,y), (319,y), (70,70,70))
+        for x in range(0, 320, 30): cv2.line(frame, (x,0), (x,239), (70,70,70))
+        x = 20 + self.index % 220
+        cv2.rectangle(frame, (x,70), (x+60,130), (0,180,255), -1)
+        cv2.putText(frame, 'SYNTHETIC DEMO', (15,25), cv2.FONT_HERSHEY_SIMPLEX, .6, (255,255,255), 1)
+        return True, frame
+
 class Replay(Node):
     def __init__(self, video):
         super().__init__('tello_replay')
-        self.capture=cv2.VideoCapture(video)
+        self.synthetic = video is None
+        self.capture=DemoCapture() if self.synthetic else cv2.VideoCapture(video)
         if not self.capture.isOpened(): raise RuntimeError('Cannot decode replay video')
         self.bridge=CvBridge()
         self.images=self.create_publisher(Image,'/tello/image_raw',qos_profile_sensor_data)
@@ -47,10 +64,12 @@ class Replay(Node):
                 'descent_assist':False,'input_active':fresh,'commanded_rc':self.rc if fresh else [0]*4,
                 'flight_enabled':False,'native_fast_requested':False,'battery':100,'simulation':True}
         out=String();out.data=json.dumps(status);self.status.publish(out)
-        out=String();out.data=json.dumps({'received_stamp_ns':time.time_ns(),'state':{'bat':100,'simulation':True,'note':'Synthetic telemetry; video is recorded'}});self.telemetry.publish(out)
+        note = 'Synthetic camera and telemetry; not a SLAM accuracy test' if self.synthetic else 'Synthetic telemetry; video is recorded'
+        out=String();out.data=json.dumps({'received_stamp_ns':time.time_ns(),'state':{'bat':100,'simulation':True,'note':note}});self.telemetry.publish(out)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('video');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('video', nargs='?');parser.add_argument('--demo', action='store_true');args=parser.parse_args()
+    if bool(args.video) == bool(args.demo): parser.error('Choose a video path or --demo.')
     rclpy.init();node=Replay(args.video)
     try:rclpy.spin(node)
     except KeyboardInterrupt:pass
