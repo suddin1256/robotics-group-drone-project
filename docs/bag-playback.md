@@ -2,6 +2,8 @@
 
 This mode reads an existing ROS 2 MCAP bag without modifying it. It republishes recorded images, telemetry and driver status in their recorded order/timing. It deliberately excludes `/tello/manual_control` and never starts the Tello driver. Keep the drone powered off while developing from recordings.
 
+For independent YOLO/depth views and ordered processing of every recorded SLAM frame, add `--vision --slam-all-frames`. See [performance modes](performance.md). The updated small SLAM adapter is rebuilt automatically; live drone code and the original compiled adapter remain available.
+
 On Shadib's original setup:
 
 ```sh

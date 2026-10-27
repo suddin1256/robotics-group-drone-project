@@ -18,6 +18,22 @@ pre{white-space:pre-wrap}
 </style>
 <h2>Tello — live visual SLAM</h2>
 <p id="playbackBanner" style="display:none;padding:12px;background:#17486b"></p>
+<pre id="slamPerformance"></pre>
+<script>
+async function updateSlamPerformance(){
+ try{
+  const response=await fetch('/slam-status.json?t='+Date.now(),{cache:'no-store'});
+  if(response.ok){
+   const data=await response.json();
+   document.getElementById('slamPerformance').textContent=
+    `SLAM ${data.ordered?'ordered recording':'latest-frame live'}: ${data.state} | Processed ${data.processed_frames}`+
+    (data.expected_frames?` / ${data.expected_frames}`:'')+` | Last feed: ${(data.last_feed_seconds*1000).toFixed(1)}ms`;
+  }
+ }catch(error){}
+ setTimeout(updateSlamPerformance,500);
+}
+updateSlamPerformance();
+</script>
 <script>
 async function updatePlayback(){
  if(!window.TELLO_PLAYBACK_ONLY)return;
@@ -57,6 +73,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 <p>Read-only experiment. Scores are not measured distances. Processing may lag behind live video.</p>
 <img id="visionPreview" style="width:960px;max-width:100%;display:none" alt="Vision output">
 <pre id="visionStatus">Vision disabled. Start with --vision after model preparation.</pre>
+<h4>Independent depth view</h4>
+<img id="depthPreview" style="width:480px;max-width:100%;display:none" alt="Relative depth">
+<pre id="depthStatus">Depth worker disabled or not started.</pre>
 </section>
 <script>
 let visionStamp=0;
@@ -72,7 +91,9 @@ async function updateVision(){
   status.textContent=`${heartbeat>15?'STATUS MAY BE STALE | ':''}${data.state}: ${data.message}`+
    (age===null?'':`\nDisplayed source frame age: ${age.toFixed(1)}s`)+
    (data.inference_seconds?` | Inference: ${data.inference_seconds.toFixed(2)}s/frame | Objects: ${data.objects}`:'')+
-   '\nProximity labels stay UNKNOWN unless the reference object is explicitly confirmed.';
+   (data.observed_fps?` | Output: ${data.observed_fps.toFixed(1)} FPS`:'')+
+   (data.input_age_seconds!==undefined?` | Age entering model: ${data.input_age_seconds.toFixed(2)}s`:'')+
+   (data.stage?'\nIndependent YOLO output. Object labels are not obstacle distances.':'\nProximity labels require a confirmed reference object.');
   image.style.opacity='1';
   if(data.output_stamp_ns&&data.output_stamp_ns!==visionStamp){
    visionStamp=data.output_stamp_ns;
@@ -80,9 +101,27 @@ async function updateVision(){
    image.src='/vision.jpg?t='+Date.now();
   }
  }catch(error){status.textContent='Vision disabled or not started. Use --vision after model preparation.';}
- setTimeout(updateVision,1000);
+ setTimeout(updateVision,100);
 }
 updateVision();
+let depthStamp=0;
+async function updateDepth(){
+ const text=document.getElementById('depthStatus'),image=document.getElementById('depthPreview');
+ try{
+  const response=await fetch('/depth-status.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('disabled');
+  const data=await response.json();
+  const age=data.output_stamp_ns?Math.max(0,Date.now()/1000-data.output_stamp_ns/1e9):null;
+  text.textContent=`${data.state}: ${data.message}`+(age===null?'':` | Frame age: ${age.toFixed(1)}s`)+
+   (data.inference_seconds?` | Model: ${data.inference_seconds.toFixed(2)}s | ${data.device}`:'')+
+   '\nDepth and segmentation refer to independently timestamped frames; they are not fused.';
+  if(data.output_stamp_ns&&data.output_stamp_ns!==depthStamp){
+   depthStamp=data.output_stamp_ns;image.onload=()=>{image.style.display='block';};image.src='/depth.jpg?t='+Date.now();
+  }
+ }catch(error){text.textContent='Independent depth worker disabled or not started.';}
+ setTimeout(updateDepth,200);
+}
+updateDepth();
 </script>
 
 <section id="pad" tabindex="0">

@@ -3,6 +3,7 @@ import argparse
 import json
 import math
 import os
+import struct
 from pathlib import Path
 import time
 
@@ -37,6 +38,11 @@ class BagReplay(Node):
         self.position = 0
         self.recorded_image_stamp = None
         self.delivery_image_stamp = None
+        self.ordered = None
+        if os.environ.get('TELLO_SLAM_ORDERED') == '1':
+            from cv_bridge import CvBridge
+            self.converter = CvBridge()
+            self.ordered = (self.folder/'slam-input.bin').open('wb')
         self.reader = rosbag2_py.SequentialReader()
         self.reader.open(rosbag2_py.StorageOptions(uri=str(bag), storage_id='mcap'),
                          rosbag2_py.ConverterOptions(input_serialization_format='cdr', output_serialization_format='cdr'))
@@ -70,6 +76,15 @@ class BagReplay(Node):
         now = time.time_ns()
         if topic == '/tello/image_raw':
             self.recorded_image_stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+            if self.ordered is not None:
+                frame = self.converter.imgmsg_to_cv2(message, desired_encoding='bgr8')
+                if frame.shape != (240,320,3):
+                    raise RuntimeError('Ordered SLAM expects the calibrated 320x240 camera stream.')
+                packet = struct.pack('<dII', self.recorded_image_stamp/1e9, 320,240)+frame.tobytes()
+                if self.ordered.tell()+len(packet) > 2*1024**3:
+                    raise RuntimeError('Ordered SLAM spool exceeded 2 GiB. Use a shorter recording; original bag is unchanged.')
+                self.ordered.write(packet)
+                self.ordered.flush()
             self.delivery_image_stamp = now
             message.header.stamp.sec, message.header.stamp.nanosec = divmod(now, 1_000_000_000)
             self.image_count += 1
@@ -107,7 +122,15 @@ class BagReplay(Node):
                     vision = json.loads((self.folder / 'vision-status.json').read_text())
                 except FileNotFoundError:
                     vision = {}
-                if vision.get('state') in {'waiting', 'ready', 'running', 'processing'}:
+                if os.environ.get('TELLO_VISION_SPLIT') == '1':
+                    try:
+                        depth = json.loads((self.folder/'depth-status.json').read_text())
+                    except FileNotFoundError:
+                        depth = {}
+                else:
+                    depth = vision
+                ready_states = {'waiting','ready','running','processing','error'}
+                if vision.get('state') in ready_states and depth.get('state') in ready_states:
                     break
                 if vision.get('state') == 'error':
                     print('V4 failed to load; playing recording without processed vision. Check vision log.', flush=True)
@@ -137,6 +160,10 @@ class BagReplay(Node):
             if time.monotonic() - last_report >= 5:
                 print(f'Bag replay: {self.position:.1f}s | images={self.image_count} | rate={self.rate}x', flush=True)
                 last_report = time.monotonic()
+        if self.ordered is not None:
+            self.ordered.close()
+            self.ordered = None
+            (self.folder/'slam-input.done').write_text(str(self.image_count))
         self.status('finished', True)
         print('Recording finished. Dashboard remains open; Ctrl+C stops all components. Restart to replay.', flush=True)
         while rclpy.ok():
@@ -159,6 +186,8 @@ def main():
         pass
     finally:
         if node is not None:
+            if node.ordered is not None:
+                node.ordered.close()
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -17,6 +17,8 @@ Demo images/telemetry are synthetic. For actual vision evaluation, replace `--de
 
 ## Shared updates
 
+Performance work: `--vision` now runs YOLO and MiDaS independently. Recorded SLAM can process every image with `--slam-all-frames`. See [performance modes and profiling](docs/performance.md).
+
 Real recorded camera/telemetry playback with dashboard, V4 and SLAM is available through `--bag`. See [ROS bag playback](docs/bag-playback.md). Playback never sends recorded flight-control requests to a drone.
 
 Stop the program, then run:
