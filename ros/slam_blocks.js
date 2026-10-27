@@ -33,8 +33,11 @@
  const automatic=document.getElementById('blocksAuto');
  const summary=document.getElementById('blocksSummary');
  let points=[],cameras=[],center=[0,0,0],radius=1,cells=[],cellSize=1,totalCells=0;
- let yaw=-.55,pitch=.4,zoom=1,drag=false,lastX=0,lastY=0,pending=false;
- function fit(){const fitted=bounds(points);center=fitted.center;radius=fitted.radius;}
+ let yaw=.3,pitch=.8,zoom=1.15,drag=false,lastX=0,lastY=0,pending=false,concept=true;
+ function fit(){
+  if(concept){center=[0,-.6,.6];radius=3.4;return;}
+  const fitted=bounds(points);center=fitted.center;radius=fitted.radius;
+ }
  function rebuild(){
   cellSize=radius/Number(detail.value);
   const all=voxelize(points,cellSize);
@@ -57,11 +60,77 @@
   const p=project(a),q=project(b);ctx.strokeStyle=color;ctx.lineWidth=width;
   ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();
  }
+ function ring(position,rx,rz,color,width=1,fill=null){
+  ctx.beginPath();
+  for(let i=0;i<=48;i++){
+   const a=i*Math.PI*2/48,p=project([position[0]+Math.cos(a)*rx,position[1],position[2]+Math.sin(a)*rz]);
+   if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);
+  }
+  ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();
+ }
+ function conceptScene(ratio){
+  const background=ctx.createLinearGradient(0,0,0,canvas.height);
+  background.addColorStop(0,'#ffffff');background.addColorStop(1,'#e9edf1');
+  ctx.fillStyle=background;ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let i=-5;i<=5;i++){
+   line([i,0,-4],[i,0,5],'#dfe5ea');line([-5,0,i],[5,0,i],'#dfe5ea');
+  }
+  const shapes=[
+   {p:[-2.1,-.85,.6],r:[.75,.85,2.1],c:[178,187,193]},
+   {p:[2.25,-.65,1.9],r:[.7,.65,1.6],c:[185,193,199]},
+   {p:[-.35,-.55,3.65],r:[1.4,.55,.62],c:[194,200,204]},
+   {p:[1.25,-.75,-.1],r:[.24,.65,.25],c:[235,153,57]},
+   {p:[1.25,-1.5,-.1],r:[.22,.22,.22],c:[242,171,77]},
+   {p:[0,-.32,-1.75],r:[.25,.09,.32],c:[46,143,166]}
+  ];
+  for(const shape of shapes)ring([shape.p[0],.015,shape.p[2]],shape.r[0]*1.1,shape.r[2]*1.08,'transparent',0,'rgba(60,70,80,.065)');
+  ring([0,0,-1.75],1,1,'#95c5d0',ratio);ring([0,0,-1.75],1.65,1.65,'#c3dce1',ratio);
+  const polygons=[];
+  for(const shape of shapes){
+   const rows=18,columns=32;
+   function vertex(row,column){
+    const latitude=-Math.PI/2+row*Math.PI/rows,longitude=column*Math.PI*2/columns;
+    return [shape.p[0]+shape.r[0]*Math.cos(latitude)*Math.cos(longitude),
+            shape.p[1]+shape.r[1]*Math.sin(latitude),
+            shape.p[2]+shape.r[2]*Math.cos(latitude)*Math.sin(longitude)];
+   }
+   for(let row=0;row<rows;row++)for(let column=0;column<columns;column++){
+    const world=[vertex(row,column),vertex(row+1,column),vertex(row+1,column+1),vertex(row,column+1)];
+    const projected=world.map(project);
+    const middle=[0,1,2].map(i=>world.reduce((sum,p)=>sum+p[i],0)/4);
+    const normal=middle.map((v,i)=>(v-shape.p[i])/(shape.r[i]*shape.r[i]));
+    const length=Math.hypot(...normal)||1;
+    const light=Math.max(0,(-.35*normal[0]-.85*normal[1]-.4*normal[2])/length);
+    const shade=.65+.35*light;
+    polygons.push({vertices:projected,z:projected.reduce((sum,p)=>sum+p[2],0)/4,
+                   color:`rgb(${shape.c.map(v=>Math.round(v*shade)).join(',')})`});
+   }
+  }
+  polygons.sort((a,b)=>b.z-a.z);
+  for(const polygon of polygons){
+   ctx.beginPath();polygon.vertices.forEach((p,i)=>{if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);});
+   ctx.closePath();ctx.fillStyle=polygon.color;ctx.fill();ctx.strokeStyle=polygon.color;ctx.lineWidth=.5;ctx.stroke();
+  }
+  const drone=[0,-.32,-1.75];
+  for(const x of [-.36,.36])for(const z of [-.36,.36]){
+   const rotor=[x,drone[1],drone[2]+z];
+   line(drone,rotor,'#3e535c',3*ratio);
+   ring(rotor,.23,.23,'#397f91',1.5*ratio,'rgba(255,255,255,.7)');
+  }
+  const droneLabel=project([0,-.32,-2.35]);
+  ctx.fillStyle='#286478';ctx.font=`${11*ratio}px system-ui`;
+  ctx.fillText('DRONE · illustration',droneLabel[0]-48*ratio,droneLabel[1]+18*ratio);
+  ctx.fillStyle='#fff2d9';ctx.fillRect(10*ratio,10*ratio,Math.min(canvas.width-20*ratio,420*ratio),49*ratio);
+  ctx.fillStyle='#825417';ctx.font=`bold ${13*ratio}px system-ui`;
+  ctx.fillText('CONCEPT PREVIEW · synthetic obstacles',18*ratio,29*ratio);
+  ctx.font=`${11*ratio}px system-ui`;ctx.fillText('Not camera-derived · no measured distances · no flight control',18*ratio,47*ratio);
+ }
  function draw(){
   pending=false;
   const ratio=Math.min(window.devicePixelRatio||1,2);
   canvas.width=Math.max(1,Math.round(canvas.clientWidth*ratio));
   canvas.height=Math.max(1,Math.round(canvas.clientHeight*ratio));
+  if(concept){conceptScene(ratio);return;}
   ctx.fillStyle='#0c1726';ctx.fillRect(0,0,canvas.width,canvas.height);
   // Reference coordinate plane only; never interpreted as a detected floor.
   for(let i=-6;i<=6;i++){
@@ -94,11 +163,27 @@
  function setData(newPoints,newCameras){
   points=Array.isArray(newPoints)?newPoints.filter(valid):[];
   cameras=Array.isArray(newCameras)?newCameras.filter(valid):[];
+  if(concept)return;
   if(automatic.checked)fit();
   rebuild();requestDraw();
  }
- document.getElementById('blocksFit').onclick=()=>{fit();rebuild();requestDraw();};
- document.getElementById('blocksReset').onclick=()=>{yaw=-.55;pitch=.4;zoom=1;fit();rebuild();requestDraw();};
+ function setMode(isConcept){
+  concept=isConcept;detail.disabled=concept;automatic.disabled=concept;
+  detail.parentElement.style.display=concept?'none':'';
+  automatic.parentElement.style.display=concept?'none':'';
+  const telemetry=document.getElementById('mapTelemetry');
+  if(telemetry)telemetry.style.display=concept?'none':'';
+  document.getElementById('blocksConcept').setAttribute('aria-pressed',String(concept));
+  document.getElementById('blocksData').setAttribute('aria-pressed',String(!concept));
+  fit();
+  if(concept)summary.textContent='Planned appearance only: gray example obstacles, orange example person, blue drone. The scene is synthetic and does not use YOLO, MiDaS, telemetry or SLAM measurements. Drag to orbit; scroll to zoom.';
+  else rebuild();
+  requestDraw();
+ }
+ document.getElementById('blocksConcept').onclick=()=>setMode(true);
+ document.getElementById('blocksData').onclick=()=>setMode(false);
+ document.getElementById('blocksFit').onclick=()=>{fit();if(!concept)rebuild();requestDraw();};
+ document.getElementById('blocksReset').onclick=()=>{yaw=.3;pitch=.8;zoom=1.15;fit();if(!concept)rebuild();requestDraw();};
  document.getElementById('blocksTop').onclick=()=>{yaw=0;pitch=Math.PI/2;requestDraw();};
  detail.oninput=()=>{rebuild();requestDraw();};
  automatic.onchange=()=>{if(automatic.checked){fit();rebuild();requestDraw();}};
@@ -111,5 +196,5 @@
  canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.1,Math.min(15,zoom*Math.exp(-e.deltaY*.001)));requestDraw();},{passive:false});
  window.addEventListener('resize',requestDraw);
  root.slamBlockViewer={setData};
- requestDraw();
+ setMode(true);
 })(typeof window==='undefined'?globalThis:window);

@@ -164,14 +164,15 @@ Controls OFF — click to enable</button>
 <p class="map-caption">Blue: visual landmarks. Orange: camera keyframe positions. Drag to rotate; scroll to zoom. Scale is arbitrary.</p>
 <canvas id="view"></canvas>
 <div class="map-card">
-<h3>3D landmark blocks</h3>
-<p class="map-caption">A second view of the same SLAM points, grouped into blocks. This is not a dense surface reconstruction or an occupied/free-space map. Empty space is unknown. The grid uses SLAM coordinates, not a detected floor or gravity alignment.</p>
+<h3>Planned 3D obstacle-map view</h3>
+<p class="map-caption">Concept preview shows synthetic obstacle shapes to explain the goal. It is not generated from the camera, YOLO or SLAM and is never used for flight. Switch to SLAM data to inspect the actual sparse landmark blocks; those are not a solid occupancy map.</p>
 <div class="map-toolbar">
+<button id="blocksConcept" aria-pressed="true">Concept preview</button><button id="blocksData" aria-pressed="false">Actual SLAM data</button>
 <button id="blocksFit">Fit map</button><button id="blocksReset">Reset view</button><button id="blocksTop">Top view</button>
 <label>Block detail <input id="blocksDetail" type="range" min="12" max="72" value="30"></label>
 <label><input id="blocksAuto" type="checkbox" checked> Auto-fit</label>
 </div>
-<canvas id="blockView" aria-label="Interactive voxelized SLAM landmarks"></canvas>
+<canvas id="blockView" aria-label="Interactive concept preview or actual SLAM landmark data"></canvas>
 <p id="blocksSummary" class="map-caption">Waiting for SLAM landmarks.</p>
 <pre id="mapTelemetry" class="map-caption">Telemetry context is displayed separately; it is not fused into SLAM.</pre>
 </div>

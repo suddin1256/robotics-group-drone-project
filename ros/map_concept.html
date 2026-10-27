@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Drone obstacle-map concept</title>
+<style>
+body{margin:0;padding:24px;background:#101827;color:#eef3f7;font:16px system-ui}
+main{max-width:1200px;margin:auto}p{line-height:1.5;color:#bed0de}
+button{background:#334b60;color:white;border:0;border-radius:6px;padding:10px;margin:4px;cursor:pointer}
+button[aria-pressed=true]{background:#227e93}button:disabled{opacity:.45}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+canvas{width:100%;height:65vh;min-height:350px;border-radius:12px;touch-action:none}
+</style>
+<main>
+<h1>Planned 3D obstacle-map view</h1>
+<p><strong>Concept illustration only.</strong> This is the appearance we are aiming for, not the current perception output. All obstacle shapes are synthetic. No drone connection, model inference or measured distances are involved.</p>
+<div class="toolbar">
+<button id="blocksConcept" aria-pressed="true">Concept preview</button>
+<button id="blocksData" disabled aria-pressed="false">SLAM data: use full dashboard</button>
+<button id="blocksFit">Fit map</button><button id="blocksReset">Reset view</button><button id="blocksTop">Top view</button>
+<label>Block detail <input id="blocksDetail" type="range" min="12" max="72" value="30"></label>
+<label><input id="blocksAuto" type="checkbox" checked> Auto-fit</label>
+</div>
+<canvas id="blockView" aria-label="Synthetic obstacle-map concept illustration"></canvas>
+<p id="blocksSummary"></p>
+<p>Future pipeline: synchronized camera pose + depth → fused surfaces/occupancy → obstacle visualization. Object labels can come from YOLO. Unknown space must remain unknown; the illustration does not establish that an area is safe to fly through.</p>
+</main>
+<script src="slam_blocks.js"></script>
