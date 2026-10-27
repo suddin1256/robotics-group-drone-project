@@ -58,7 +58,8 @@ Open http://127.0.0.1:8082. Live hardware requires TELLO Wi-Fi.
 For a deliberate flight session:
 
 ```sh
-python3 start.py --reuse-existing --enable-flight
+cd ~/Documents/robotics-group-drone-project
+python3 start.py --no-slam --enable-flight
 ```
 
 Enable dashboard controls, press T to request motor arming, then hold W to lift.
