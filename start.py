@@ -1,5 +1,6 @@
 """One launcher; no flight unless --enable-flight is supplied."""
 import argparse
+import math
 import os
 from pathlib import Path
 import signal
@@ -21,7 +22,10 @@ def plan(args):
     run = [executable, 'run', '--manifest-path', str(manifest), 'python']
     if portable:
         run.insert(2, '--locked')
-    if getattr(args, 'demo', False):
+    if getattr(args, 'bag', None):
+        source = run + [str(ROOT / 'ros/bag_replay.py'), str(Path(args.bag).resolve()),
+                        '--rate', str(getattr(args, 'rate', 1.0))]
+    elif getattr(args, 'demo', False):
         source = run + [str(ROOT / 'ros/replay.py'), '--demo']
     elif args.replay:
         source = run + [str(ROOT / 'ros/replay.py'), str(Path(args.replay).resolve())]
@@ -42,6 +46,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--enable-flight', action='store_true')
     p.add_argument('--replay', metavar='VIDEO')
+    p.add_argument('--bag', metavar='BAG_FOLDER', help='Replay real recorded images/telemetry; no drone driver')
+    p.add_argument('--rate', type=float, default=1.0, help='ROS bag playback speed, default 1.0')
+    p.add_argument('--duration', type=float, help='Stop offline replay/demo automatically after this many seconds')
+    p.add_argument('--runtime-dir', type=Path, help='Separate runtime workspace for offline tests')
+    p.add_argument('--port', type=int, default=8082, help='Local dashboard port')
     p.add_argument('--demo', action='store_true', help='Built-in synthetic camera/telemetry; no drone or recording needed')
     p.add_argument('--portable', action='store_true', help='Use the shared core environment installed by bootstrap.py')
     p.add_argument('--reuse-existing', action='store_true', help='Use original Mac environments and compiled SLAM')
@@ -49,8 +58,13 @@ def main():
     p.add_argument('--vision', action='store_true', help='Optional V4 segmentation and relative depth')
     p.add_argument('--dry-run', action='store_true', help='Print startup plan; start nothing')
     args = p.parse_args()
-    if (args.replay or args.demo) and args.enable_flight: p.error('Replay/demo cannot enable flight.')
-    if args.replay and args.demo: p.error('Choose --demo or --replay, not both.')
+    offline = bool(args.replay or args.demo or args.bag)
+    if offline and args.enable_flight: p.error('Replay/demo/bag cannot enable flight.')
+    if sum(map(bool, [args.replay, args.demo, args.bag])) > 1: p.error('Choose --demo, --replay or --bag, not multiple sources.')
+    if not math.isfinite(args.rate) or args.rate <= 0: p.error('--rate must be positive and finite.')
+    if args.duration is not None and (not offline or not math.isfinite(args.duration) or args.duration <= 0): p.error('--duration requires offline replay and a positive finite duration.')
+    if args.runtime_dir is not None and not offline: p.error('--runtime-dir is for offline testing only.')
+    if not 1 <= args.port <= 65535: p.error('Invalid dashboard port.')
     if args.portable and args.reuse_existing: p.error('--portable and --reuse-existing select different environments.')
     jobs, binary = plan(args)
     if args.dry_run:
@@ -64,11 +78,12 @@ def main():
         if state.get('platform') != host or state.get('fingerprint') != fingerprint(state.get('features', []), host):
             p.error('Dependencies changed or this setup belongs to another laptop. Run python3 bootstrap.py again.')
         if args.vision and 'vision' not in state.get('features', []): p.error('Run python3 bootstrap.py --vision first.')
-        if not (args.replay or args.demo) and 'hardware' not in state.get('features', []): p.error('Run python3 bootstrap.py --hardware for direct Tello access.')
+        if not offline and 'hardware' not in state.get('features', []): p.error('Run python3 bootstrap.py --hardware for direct Tello access.')
     if args.vision and not (ROOT/'vision/.venv/bin/python').is_file(): p.error('Vision environment missing; see docs/vision.md.')
     if args.replay and not Path(args.replay).is_file(): p.error('Replay video does not exist.')
+    if args.bag and not Path(args.bag).is_dir(): p.error('Bag folder does not exist.')
     if not args.no_slam and not binary.is_file(): p.error('Build SLAM first, or use --no-slam.')
-    work = ROOT / 'runtime'
+    work = args.runtime_dir.resolve() if args.runtime_dir else ROOT / 'runtime'
     (work / 'live').mkdir(parents=True, exist_ok=True)
     (work / 'assets').mkdir(exist_ok=True)
     import shutil
@@ -78,9 +93,12 @@ def main():
         if not vocabulary.is_file(): p.error('Missing ORB vocabulary; run setup.py first.')
         shutil.copy2(vocabulary,work/'assets/orb_vocab.fbow')
     # Never display a previous session as a current live map.
-    for name in ['map.json','telemetry.json','frame.bin','video.jpg','preview.jpg','vision.jpg','vision-status.json']:
+    for name in ['map.json','telemetry.json','frame.bin','video.jpg','preview.jpg','vision.jpg','vision-status.json','playback.json']:
         (work/'live'/name).unlink(missing_ok=True)
-    env = dict(os.environ, TELLO_RUNTIME_DIR=str(work/'live'), ROS_DOMAIN_ID='42')
+    env = dict(os.environ, TELLO_RUNTIME_DIR=str(work/'live'), ROS_DOMAIN_ID='43' if args.bag else '42')
+    env['TELLO_PLAYBACK_ONLY'] = '1' if args.bag else '0'
+    env['TELLO_WAIT_FOR_VISION'] = '1' if args.bag and args.vision else '0'
+    env['TELLO_DASHBOARD_PORT'] = str(args.port)
     env.setdefault('HF_HUB_OFFLINE', '1')
     env.setdefault('TRANSFORMERS_OFFLINE', '1')
     children=[]; handles=[]
@@ -102,10 +120,14 @@ def main():
             handles.append(handle)
             process=subprocess.Popen(command,cwd=work,env=env,stdout=handle,stderr=subprocess.STDOUT,start_new_session=True)
             children.append((name,process))
-        print('Dashboard: http://127.0.0.1:8082 | logs:', ROOT/'logs', flush=True)
+        print(f'Dashboard: http://127.0.0.1:{args.port} | logs:', ROOT/'logs', flush=True)
+        if args.bag: print('BAG PLAYBACK: ROS domain 43; controls disabled; original recording is read-only.', flush=True)
         print('Flight ENABLED' if args.enable_flight else 'Flight disabled / replay; motor arming blocked',flush=True)
         print('Land before closing. Ctrl+C requests shutdown; it cannot guarantee landing after link loss.',flush=True)
+        deadline = time.monotonic() + args.duration if args.duration else None
         while not stopping:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             for name, child in children:
                 if name in failed_optional: continue
                 if child.poll() is not None and name == 'vision':

@@ -17,6 +17,26 @@ padding:10px;margin:3px;cursor:pointer}
 pre{white-space:pre-wrap}
 </style>
 <h2>Tello — live visual SLAM</h2>
+<p id="playbackBanner" style="display:none;padding:12px;background:#17486b"></p>
+<script>
+async function updatePlayback(){
+ if(!window.TELLO_PLAYBACK_ONLY)return;
+ const banner=document.getElementById('playbackBanner');banner.style.display='block';
+ try{
+  const response=await fetch('/playback.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('waiting');
+  const data=await response.json();
+  banner.textContent=`RECORDING PLAYBACK — ${data.state} | ${data.position_seconds.toFixed(1)}s | ${data.rate}x | ${data.image_count} images. Flight controls disabled. Telemetry is recorded, not live.`;
+ }catch(error){banner.textContent='RECORDING PLAYBACK — waiting for recording. Flight controls disabled.';}
+ setTimeout(updatePlayback,500);
+}
+document.addEventListener('DOMContentLoaded',()=>{
+ if(window.TELLO_PLAYBACK_ONLY){
+  document.querySelectorAll('#pad button').forEach(button=>button.disabled=true);
+  updatePlayback();
+ }
+});
+</script>
 <p id="status">Waiting for SLAM data…</p>
 <section>
 <div><h3>Live camera</h3>
@@ -203,7 +223,7 @@ const movement=new Set(['w','s','a','d','ArrowUp','ArrowDown',
                         'ArrowLeft','ArrowRight']);
 let busy=false,controlsEnabled=false,selectedMode='slow';
 function active(){
- return document.hasFocus() && controlsEnabled;
+ return !window.TELLO_PLAYBACK_ONLY && document.hasFocus() && controlsEnabled;
 }
 async function send(action=null){
  const response=await fetch('/input',{

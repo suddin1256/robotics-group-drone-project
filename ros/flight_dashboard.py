@@ -23,6 +23,10 @@ allowed = {"w", "s", "a", "d", "ArrowUp", "ArrowDown",
            "ArrowLeft", "ArrowRight"}
 
 PAGE = Path(__file__).with_name("dashboard.html").read_text()
+PLAYBACK_ONLY = os.environ.get('TELLO_PLAYBACK_ONLY') == '1'
+if PLAYBACK_ONLY:
+    PAGE = PAGE.replace('<h2>', '<script>window.TELLO_PLAYBACK_ONLY=true;</script><h2>', 1)
+    PAGE = PAGE.replace('Live camera</h3>', 'Recorded camera</h3>')
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -33,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
             content_type = "application/json"
         elif path in {
             "/video.jpg", "/preview.jpg", "/map.json", "/telemetry.json",
-            "/vision.jpg", "/vision-status.json"
+            "/vision.jpg", "/vision-status.json", "/playback.json"
         }:
             try:
                 body = (live_folder / path[1:]).read_bytes()
@@ -69,6 +73,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         global keys, last_input, input_enabled, selected_mode
+        if PLAYBACK_ONLY:
+            self.send_error(403, 'Flight controls disabled during bag playback')
+            return
         if self.path != "/input":
             self.send_error(404)
             return
@@ -104,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
 class ManualControl(Node):
     def __init__(self):
         super().__init__("manual_control_live")
-        self.publisher = self.create_publisher(
+        self.publisher = None if PLAYBACK_ONLY else self.create_publisher(
             String, "/tello/manual_control", 10
         )
         self.driver_status_subscription = self.create_subscription(
@@ -119,6 +126,8 @@ class ManualControl(Node):
             control_status = message.data
 
     def tick(self):
+        if PLAYBACK_ONLY:
+            return
         with lock:
             fresh = input_enabled and time.monotonic() - last_input < 0.35
             held = set(keys) if fresh else set()
@@ -158,9 +167,10 @@ class ManualControl(Node):
 
 rclpy.init()
 node = ManualControl()
-server = ThreadingHTTPServer(("127.0.0.1", 8082), Handler)
+port = int(os.environ.get('TELLO_DASHBOARD_PORT', '8082'))
+server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
-print("Open http://127.0.0.1:8082 — use only with the flight driver in a clear flight area.", flush=True)
+print(f"Open http://127.0.0.1:{port} — " + ('RECORDING PLAYBACK, controls disabled.' if PLAYBACK_ONLY else 'use only with the flight driver in a clear flight area.'), flush=True)
 
 try:
     rclpy.spin(node)
