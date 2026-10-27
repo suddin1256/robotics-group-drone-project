@@ -31,7 +31,10 @@ if PLAYBACK_ONLY:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/control.json":
+        if path == '/slam_blocks.js':
+            body = Path(__file__).with_name('slam_blocks.js').read_bytes()
+            content_type = 'application/javascript; charset=utf-8'
+        elif path == "/control.json":
             with lock:
                 body = control_status.encode()
             content_type = "application/json"

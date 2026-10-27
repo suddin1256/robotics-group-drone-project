@@ -17,6 +17,8 @@ Demo images/telemetry are synthetic. For actual vision evaluation, replace `--de
 
 ## Shared updates
 
+Dashboard: **Rian's V4 vision system** now uses the original contour/text style at normal camera-panel size. A second interactive **3D landmark blocks** view visualizes the sparse SLAM data. See [dashboard views and telemetry scope](docs/dashboard-views.md).
+
 Performance work: `--vision` now runs YOLO and MiDaS independently. Recorded SLAM can process every image with `--slam-all-frames`. See [performance modes and profiling](docs/performance.md).
 
 Real recorded camera/telemetry playback with dashboard, V4 and SLAM is available through `--bag`. See [ROS bag playback](docs/bag-playback.md). Playback never sends recorded flight-control requests to a drone.

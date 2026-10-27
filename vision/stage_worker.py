@@ -54,6 +54,7 @@ def main():
         os.chdir(models)
         if args.stage == 'objects':
             from ultralytics import YOLO
+            from rian_style import render
             model_name = 'yolo11s-seg.pt'
             model = YOLO(str(models/model_name))
         else:
@@ -91,10 +92,7 @@ def main():
                 sync()
                 inference_seconds = time.monotonic() - start
                 render_start = time.monotonic()
-                display = result.plot()
-                count = len(result.boxes) if result.boxes is not None else 0
-                cv2.putText(display, 'YOLO only - no distance measurement', (5,15),
-                            cv2.FONT_HERSHEY_SIMPLEX,.35,(255,255,255),1)
+                display, count = render(frame,result,model.names)
             else:
                 with torch.inference_mode():
                     result = model(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))

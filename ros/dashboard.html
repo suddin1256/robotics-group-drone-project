@@ -5,6 +5,14 @@
 body{margin:0;padding:20px;background:#101827;color:#eee;font:16px system-ui}
 section{display:flex;flex-wrap:wrap;gap:20px}
 img{width:480px;max-width:100%;background:#182438}
+.vision-card{width:480px;max-width:100%}
+.vision-card pre{overflow-wrap:anywhere}
+.vision-preview{width:480px;max-width:100%;height:auto;object-fit:contain}
+.vision-preview.combined{width:960px}
+.vision-card:has(.combined){width:960px}
+.map-card{margin:20px 0;padding:16px;border:1px solid #34465d;border-radius:10px}
+.map-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
+.map-caption{font-size:14px;color:#b5c5d8;line-height:1.5}
 canvas{width:100%;height:55vh;background:#142035;touch-action:none}
 button{padding:8px}
 body.low-battery{background:#650f19}
@@ -68,14 +76,17 @@ document.addEventListener('DOMContentLoaded',()=>{
 </div>
 </section>
 
-<section style="display:block;margin:20px 0">
-<h3>Teammate vision V4: segmentation + relative depth</h3>
-<p>Read-only experiment. Scores are not measured distances. Processing may lag behind live video.</p>
-<img id="visionPreview" style="width:960px;max-width:100%;display:none" alt="Vision output">
+<h3>Rian's V4 vision system</h3>
+<p>Full camera view, no digital crop. Independent views have different timestamps; proximity/distance estimates are not available in split mode.</p>
+<section style="margin:20px 0;align-items:flex-start">
+<div class="vision-card"><h4>YOLO segmentation</h4>
+<img id="visionPreview" class="vision-preview" style="display:none" alt="Rian's segmentation view">
 <pre id="visionStatus">Vision disabled. Start with --vision after model preparation.</pre>
-<h4>Independent depth view</h4>
-<img id="depthPreview" style="width:480px;max-width:100%;display:none" alt="Relative depth">
+</div>
+<div class="vision-card"><h4>Independent depth view</h4>
+<img id="depthPreview" class="vision-preview" style="display:none" alt="Relative depth">
 <pre id="depthStatus">Depth worker disabled or not started.</pre>
+</div>
 </section>
 <script>
 let visionStamp=0;
@@ -86,6 +97,7 @@ async function updateVision(){
   const response=await fetch('/vision-status.json?t='+Date.now(),{cache:'no-store'});
   if(!response.ok)throw Error('disabled');
   const data=await response.json();
+  image.classList.toggle('combined',!data.stage);
   const age=data.output_stamp_ns?Math.max(0,Date.now()/1000-data.output_stamp_ns/1e9):null;
   const heartbeat=Date.now()/1000-data.stamp_ns/1e9;
   status.textContent=`${heartbeat>15?'STATUS MAY BE STALE | ':''}${data.state}: ${data.message}`+
@@ -93,7 +105,7 @@ async function updateVision(){
    (data.inference_seconds?` | Inference: ${data.inference_seconds.toFixed(2)}s/frame | Objects: ${data.objects}`:'')+
    (data.observed_fps?` | Output: ${data.observed_fps.toFixed(1)} FPS`:'')+
    (data.input_age_seconds!==undefined?` | Age entering model: ${data.input_age_seconds.toFixed(2)}s`:'')+
-   (data.stage?'\nIndependent YOLO output. Object labels are not obstacle distances.':'\nProximity labels require a confirmed reference object.');
+   (data.stage?'\nRian\'s outline/text style. Labels identify objects, not distance.':'\nOriginal combined view; proximity labels require a confirmed reference object.');
   image.style.opacity='1';
   if(data.output_stamp_ns&&data.output_stamp_ns!==visionStamp){
    visionStamp=data.output_stamp_ns;
@@ -148,7 +160,22 @@ Controls OFF — click to enable</button>
 </div>
 </section>
 
+<h3>Sparse landmark map</h3>
+<p class="map-caption">Blue: visual landmarks. Orange: camera keyframe positions. Drag to rotate; scroll to zoom. Scale is arbitrary.</p>
 <canvas id="view"></canvas>
+<div class="map-card">
+<h3>3D landmark blocks</h3>
+<p class="map-caption">A second view of the same SLAM points, grouped into blocks. This is not a dense surface reconstruction or an occupied/free-space map. Empty space is unknown. The grid uses SLAM coordinates, not a detected floor or gravity alignment.</p>
+<div class="map-toolbar">
+<button id="blocksFit">Fit map</button><button id="blocksReset">Reset view</button><button id="blocksTop">Top view</button>
+<label>Block detail <input id="blocksDetail" type="range" min="12" max="72" value="30"></label>
+<label><input id="blocksAuto" type="checkbox" checked> Auto-fit</label>
+</div>
+<canvas id="blockView" aria-label="Interactive voxelized SLAM landmarks"></canvas>
+<p id="blocksSummary" class="map-caption">Waiting for SLAM landmarks.</p>
+<pre id="mapTelemetry" class="map-caption">Telemetry context is displayed separately; it is not fused into SLAM.</pre>
+</div>
+<script src="/slam_blocks.js"></script>
 <script>
 const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
 let points=[],cameras=[],center=[0,0,0],radius=1;
@@ -179,6 +206,7 @@ async function refresh(){
   if(!response.ok)throw Error('Waiting for map');
   const data=await response.json();
   points=data.points;cameras=data.cameras;
+  if(window.slamBlockViewer)window.slamBlockViewer.setData(points,cameras);
   const age=Math.max(0,Date.now()/1000-data.timestamp);
   document.getElementById('status').textContent=
    `${age>3?'STALE — ':''}${data.state} | ${cameras.length} keyframes | `+
@@ -239,10 +267,14 @@ async function updateTelemetry(){
   document.getElementById('telemetry').textContent=
    `${age>3?'STALE — ':''}Telemetry age: ${age.toFixed(1)} s\n`+
    `${lowBattery?'LOW BATTERY — '+s.bat+'%\n':''}`+
-   `Height: ${s.h} cm | Downward distance: ${s.tof} cm\n`+
-   `Velocity components (reported): ${s.vgx}, ${s.vgy}, ${s.vgz}\n\n`+
+   (Number.isFinite(s.h)?`Height: ${s.h} cm\n`:`Height (native value; units unverified): ${s.height??'not exposed'}\n`)+
+   (Number.isFinite(s.tof)?`Downward distance: ${s.tof} cm\n`:'Downward distance: not exposed in this feed\n')+
    `All exposed state fields:\n`+
    Object.entries(s).map(([key,value])=>`${key}: ${value}`).join('\n');
+  document.getElementById('mapTelemetry').textContent=
+   `${data.replay?'Recorded':'Live'} telemetry context | Age: ${age.toFixed(1)}s | Battery: ${s.bat??'unavailable'}%\n`+
+   `Native height: ${s.height??'not exposed'} | North/east speed: ${s.north_speed??'not exposed'}, ${s.east_speed??'not exposed'} (units unverified)\n`+
+   'These readings are not used to correct SLAM pose. Handheld recordings may report zero motion despite camera movement.';
  }catch(error){
   document.getElementById('telemetry').textContent='Waiting for telemetry';
  }
@@ -283,6 +315,7 @@ function stop(){
 pad.onclick=()=>pad.focus();
 window.onkeydown=e=>{
  if(!active())return;
+ if(e.target instanceof HTMLElement&&e.target.closest('input,textarea,select'))return;
  const key=e.key.length===1?e.key.toLowerCase():e.key;
  if(!movement.has(key)&&![' ','t','l'].includes(key))return;
  e.preventDefault();
@@ -372,5 +405,8 @@ async function refreshControl(){
  setTimeout(refreshControl,300);
 }
 refreshControl();
+document.getElementById('blocksDetail').addEventListener('focus',()=>{
+ if(controlsEnabled)stop();
+});
 
 </script>
