@@ -1,6 +1,6 @@
 # Robotics group drone project
 
-Our robotics class project uses a Ryze Tello, ROS 2, Stella VSLAM, and Rian's V4 vision system. The dashboard shows the camera, telemetry, object detection, relative depth, and an experimental floor-plan map. We can fly manually or develop using recorded flights without connecting the drone.
+Our robotics class project uses a Ryze Tello, ROS 2, Stella VSLAM, YOLO, and the MiDas vision systems. The dashboard shows the camera, telemetry, object detection, relative depth, and an experimental floor-plan map. We can fly manually or develop using recorded flights without connecting the drone.
 
 The connections and manual flight work. Mapping is still a work in progress: positions and distances are not yet reliable, and automatic obstacle avoidance is not implemented.
 
