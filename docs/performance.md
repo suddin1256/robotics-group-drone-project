@@ -37,3 +37,21 @@ Next optimization decisions should follow sustained per-stage timings: lighter m
 On the Intel Mac, the handheld recording was stress-tested at 4x playback with both independent models and ordered SLAM. Every one of the 1,774 recorded images was submitted to Stella and the processed/expected counters matched at completion. Both model views generated output and the test shut down automatically.
 
 There were 69 YOLO and 7 depth output samples. Excluding the first output from each model, median model times were 0.316 seconds for YOLO and 5.008 seconds for MiDaS. This is a limited accelerated-playback test with shared CPU load, not a claim of real-time obstacle detection or a controlled comparison to prior 1x runs. It confirms that depth is still a bottleneck while YOLO can update independently. Nineteen source/launcher tests passed. Next, repeat at 1x with each worker isolated, then select a smaller depth model or optimized backend based on those measurements.
+# Sharp preview and lightweight objects
+
+Live Tello preview uses a separate JPEG-compressed 640x480 ROS topic,
+`/tello/preview/compressed`. Calibrated SLAM and inference inputs remain
+320x240; existing recordings retain their original resolution. This changes
+preview detail without increasing raw-image ROS traffic.
+
+The independent objects worker uses `yolo11n-seg.pt` and reads only the latest
+frame, rejecting inputs older than 350 ms at processing start. Inference time
+still adds latency; this is experimental perception, not verified collision
+avoidance. Nano may miss objects the larger model detected.
+
+Before disconnecting internet, cache the new model:
+
+```sh
+cd ~/Documents/robotics-group-drone-project
+vision/.venv/bin/python vision/prepare_yolo.py
+```

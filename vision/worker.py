@@ -48,6 +48,9 @@ def main():
         models.mkdir(parents=True, exist_ok=True)
         os.chdir(models)
         segmenter = YOLO(str(models / 'yolo11s-seg.pt'))
+        if args.prepare:
+            nano = YOLO(str(models / 'yolo11n-seg.pt'))
+            nano.predict(np.zeros((240, 320, 3), dtype=np.uint8), imgsz=320, device=device, verbose=False)
         depth = pipeline(task='depth-estimation', model='Intel/dpt-hybrid-midas', device=device)
 
         if args.prepare:

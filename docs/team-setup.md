@@ -71,7 +71,7 @@ Optional Stella setup is available through `python3 bootstrap.py --slam`. This i
 
 ## Team access and validation
 
-Everyone can clone the public repository. For direct pushes, the owner must invite each GitHub username through Settings → Collaborators. Otherwise members can fork and open pull requests. Follow CONTRIBUTING.md, use separate branches and review hardware/control changes.
+Everyone can clone the public repository. For direct pushes, the owner must invite each GitHub username through Settings → Collaborators. Otherwise members can fork and open pull requests. Use separate branches so group members can work without overwriting each other’s changes.
 
 Before claiming support on each laptop, record OS/CPU, bootstrap result, demo dashboard, ROS topic delivery, V4 model warm-up/inference and, separately, any hardware/SLAM tests. A dependency solver success is not a hardware or runtime test. Vision packages are top-level version-pinned but not fully transitively locked; model downloads follow upstream releases and are not checksum-pinned yet.
 

@@ -15,6 +15,9 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <deque>
 
 namespace fs = std::filesystem;
 volatile std::sig_atomic_t stopped = 0;
@@ -63,6 +66,10 @@ int main(int argc, char** argv) {
     };
     std::cout << "Waiting for live ROS frames. Ctrl+C stops SLAM.\n";
 
+    fs::create_directories("live/observations");
+    std::deque<std::string> observation_files;
+    std::vector<std::pair<double,std::string>> tracking_history;
+    double last_tracked_timestamp=0;
     try {
         while (!stopped) {
             std::ifstream input(input_path, std::ios::binary);
@@ -91,11 +98,43 @@ int main(int argc, char** argv) {
             }
             previous = timestamp;
             const auto feed_start = std::chrono::steady_clock::now();
-            slam.feed_monocular_frame(frame, timestamp);
+            const auto tracked_pose=slam.feed_monocular_frame(frame, timestamp);
             feed_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-feed_start).count();
             ++processed_frames;
             if (ordered) offset += 16 + 320*240*3;
             progress();
+
+            // Exact-frame original-image keypoints paired with stable landmark IDs.
+            // IDs are resolved against current map coordinates by the floor-plan worker.
+            const auto frame_publisher = slam.get_frame_publisher();
+            const auto tracking_state=frame_publisher->get_tracking_state();
+            if (tracking_history.empty() || tracking_history.back().second != tracking_state) {
+                tracking_history.emplace_back(timestamp,tracking_state);
+            }
+            if (tracking_state == "Tracking" && tracked_pose && tracked_pose->allFinite()) {
+                last_tracked_timestamp=timestamp;
+                const auto associations = frame_publisher->get_keypoints_and_landmarks();
+                const auto name = "live/observations/" + std::to_string(std::llround(timestamp*1e6)) + ".json";
+                std::ofstream observations(name + ".tmp");
+                observations << std::setprecision(16) << "{\"source_stamp\":" << timestamp << ",\"camera_to_world\":[";
+                for(int row=0;row<4;++row) { if(row) observations << ","; observations << "[";
+                    for(int col=0;col<4;++col) { if(col) observations << ","; observations << (*tracked_pose)(row,col); }
+                    observations << "]"; }
+                observations << "],\"features\":[";
+                bool first_feature = true;
+                for (size_t i=0; i<std::min(associations.first.size(), associations.second.size()); ++i) {
+                    const auto& landmark = associations.second[i];
+                    if (!landmark || landmark->will_be_erased()) continue;
+                    const auto uv = associations.first[i].pt;
+                    if (!first_feature) observations << ",";
+                    first_feature = false;
+                    observations << "[" << landmark->id_ << "," << uv.x << "," << uv.y << "]";
+                }
+                observations << "]}"; observations.close();
+                fs::rename(name + ".tmp", name);
+                observation_files.push_back(name);
+                if (observation_files.size()>2048) { fs::remove(observation_files.front()); observation_files.pop_front(); }
+            }
 
             if (now - last_export < 1) continue;
             last_export = now;
@@ -113,9 +152,11 @@ int main(int argc, char** argv) {
                    << "{\"timestamp\":" << (ordered ? now : timestamp)
                    << ",\"frame_timestamp\":" << timestamp
                    << ",\"processed_frames\":" << processed_frames
+                   << ",\"ordered\":" << (ordered ? "true" : "false")
                    << ",\"state\":" << std::quoted(state)
                    << ",\"points\":[";
             bool first = true;
+            std::vector<unsigned int> exported_ids;
             for (auto& point : points) {
                 if (point->will_be_erased()) continue;
                 const auto p = point->get_pos_in_world();
@@ -123,9 +164,21 @@ int main(int argc, char** argv) {
                 if (!first) output << ",";
                 first = false;
                 output << "[" << p(0) << "," << p(1) << "," << p(2) << "]";
+                exported_ids.push_back(point->id_);
+            }
+            output << "],\"landmark_ids\":[";
+            first = true;
+            for (const auto id : exported_ids) {
+                if (!first) output << ",";
+                first = false; output << id;
             }
             output << "],\"cameras\":[";
+            std::sort(cameras.begin(), cameras.end(), [](const auto& a, const auto& b) {
+                return a->id_ < b->id_;
+            });
             first = true;
+            std::vector<double> camera_times;
+            std::vector<stella_vslam::Mat44_t> camera_poses;
             for (auto& camera : cameras) {
                 if (camera->will_be_erased()) continue;
                 const auto p = camera->get_trans_wc();
@@ -133,8 +186,23 @@ int main(int argc, char** argv) {
                 if (!first) output << ",";
                 first = false;
                 output << "[" << p(0) << "," << p(1) << "," << p(2) << "]";
+                camera_times.push_back(camera->timestamp_);
+                camera_poses.push_back(camera->get_pose_wc());
             }
-            output << "]}";
+            output << "],\"camera_times\":[";
+            for (size_t i=0;i<camera_times.size();++i) { if(i) output << ","; output << camera_times[i]; }
+            output << "],\"camera_poses\":[";
+            for(size_t i=0;i<camera_poses.size();++i) { if(i) output << ","; output << "[";
+                for(int row=0;row<4;++row) { if(row) output << ","; output << "[";
+                    for(int col=0;col<4;++col) { if(col) output << ","; output << camera_poses[i](row,col); }
+                    output << "]"; } output << "]"; }
+            output << "],\"tracking_history\":[";
+            for (size_t i=0;i<tracking_history.size();++i) {
+                if(i) output << ",";
+                output << "[" << tracking_history[i].first << "," << std::quoted(tracking_history[i].second) << "]";
+            }
+            output << "],\"last_tracked_timestamp\":" << last_tracked_timestamp
+                   << ",\"map_origin\":" << (cameras.empty() ? 0 : cameras.front()->timestamp_) << "}";
             output.close();
             fs::rename("live/map.tmp", "live/map.json");
 

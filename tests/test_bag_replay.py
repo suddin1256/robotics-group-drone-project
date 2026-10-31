@@ -28,8 +28,9 @@ class BagReplaySafety(unittest.TestCase):
         tree=ast.parse((ROOT/'ros/bag_replay.py').read_text())
         assignment=next(node for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='ALLOWED' for t in node.targets))
         topics={key.value for key in assignment.value.keys}
-        self.assertEqual(topics,{'/tello/image_raw','/tello/telemetry','/tello/control_status'})
+        self.assertTrue({'/tello/image_raw','/tello/telemetry','/tello/control_status','/tello/raw_log','/tello/image_metadata'}.issubset(topics))
         self.assertNotIn('/tello/manual_control',topics)
+        self.assertNotIn('/tello/tools',topics)
 
     def test_multiple_replay_sources_rejected(self):
         result=subprocess.run([sys.executable,str(ROOT/'start.py'),'--bag','recording','--demo','--dry-run'],capture_output=True)

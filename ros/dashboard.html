@@ -10,7 +10,8 @@ img{width:480px;max-width:100%;background:#182438}
 .vision-preview{width:480px;max-width:100%;height:auto;object-fit:contain}
 .vision-preview.combined{width:960px}
 .vision-card:has(.combined){width:960px}
-.map-card{margin:20px 0;padding:16px;border:1px solid #34465d;border-radius:10px}
+.map-card{display:block;margin:20px 0;padding:16px;border:1px solid #34465d;border-radius:10px}
+[hidden]{display:none!important}
 .map-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
 .map-caption{font-size:14px;color:#b5c5d8;line-height:1.5}
 canvas{width:100%;height:55vh;background:#142035;touch-action:none}
@@ -126,7 +127,7 @@ async function updateDepth(){
   const age=data.output_stamp_ns?Math.max(0,Date.now()/1000-data.output_stamp_ns/1e9):null;
   text.textContent=`${data.state}: ${data.message}`+(age===null?'':` | Frame age: ${age.toFixed(1)}s`)+
    (data.inference_seconds?` | Model: ${data.inference_seconds.toFixed(2)}s | ${data.device}`:'')+
-   '\nDepth and segmentation refer to independently timestamped frames; they are not fused.';
+   '\nThese previews have independent timestamps. The combined map uses matched archived frames.';
   if(data.output_stamp_ns&&data.output_stamp_ns!==depthStamp){
    depthStamp=data.output_stamp_ns;image.onload=()=>{image.style.display='block';};image.src='/depth.jpg?t='+Date.now();
   }
@@ -136,9 +137,43 @@ async function updateDepth(){
 updateDepth();
 </script>
 
+<section>
+<h3>Driver telemetry and tools</h3>
+<p id="driverSummary">Waiting for community driver.</p>
+<label>Camera exposure <select id="cameraExposure"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
+<button id="applyExposure" type="button">Apply exposure</button>
+<details><summary>All decoded telemetry and available tools</summary><pre id="driverRaw">Waiting for data.</pre></details>
+<details><summary>Latest image / motion association</summary><pre id="frameRaw">Waiting for image metadata.</pre></details>
+</section>
+<script>
+async function refreshDriver(){
+ try{
+  const r=await fetch('driver-data.json?t='+Date.now(),{cache:'no-store'});
+  if(!r.ok)throw Error('No community data');
+  const d=await r.json();
+  const log=d.latest.log;
+  const age=log?(Date.now()/1000-log.received_stamp_ns/1e9):null;
+  document.getElementById('driverSummary').textContent=d.backend+' | Flight logs: '+(log?age.toFixed(1)+' seconds old':'not received yet')+' | '+d.notes;
+  document.getElementById('driverRaw').textContent=JSON.stringify(d,null,2);
+  const f=await fetch('image-metadata.json?t='+Date.now(),{cache:'no-store'});
+  if(f.ok)document.getElementById('frameRaw').textContent=JSON.stringify(await f.json(),null,2);
+ }catch(_){document.getElementById('driverSummary').textContent='Community telemetry not available in this session.';}
+ setTimeout(refreshDriver,1000);
+}
+document.getElementById('applyExposure').onclick=async()=>{
+ if(window.TELLO_PLAYBACK_ONLY)return;
+ const r=await fetch('/tool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:'exposure',value:Number(document.getElementById('cameraExposure').value)})});
+ if(!r.ok)document.getElementById('driverSummary').textContent='Exposure request failed.';
+};
+document.getElementById('applyExposure').disabled=!!window.TELLO_PLAYBACK_ONLY;
+refreshDriver();
+</script>
 <section id="pad" tabindex="0">
 <div>
 <h3>Flight controls</h3>
+<p><label>Launch surface <select id="launchSurface"><option value="ground">Ground (default)</option><option value="table">Table</option></select></label>
+<label>Table height, cm (optional) <input id="tableHeight" type="number" min="1" max="300" placeholder="Unknown"></label></p>
+<p>This records the starting surface. It does not change motor arming, set a ceiling limit, or calibrate map scale.</p>
 <button id="controlToggle" onclick="setControls(!controlsEnabled)">
 Controls OFF — click to enable</button>
 <p>
@@ -160,23 +195,55 @@ Controls OFF — click to enable</button>
 </div>
 </section>
 
-<h3>Sparse landmark map</h3>
-<p class="map-caption">Blue: visual landmarks. Orange: camera keyframe positions. Drag to rotate; scroll to zoom. Scale is arbitrary.</p>
-<canvas id="view"></canvas>
-<div class="map-card">
-<h3>Planned 3D obstacle-map view</h3>
-<p class="map-caption">Concept preview shows synthetic obstacle shapes to explain the goal. It is not generated from the camera, YOLO or SLAM and is never used for flight. Switch to SLAM data to inspect the actual sparse landmark blocks; those are not a solid occupancy map.</p>
+<section class="map-card" id="comparisonPanel" hidden>
+<h3>Recorded flight: video, SLAM and telemetry comparison</h3>
+<p>This comparison shows separate estimates on the same recording clock. The combined map below aligns supported samples experimentally; metric scale remains unverified.</p>
+<p id="comparisonStatus">Waiting for recording data.</p>
+<label><input id="comparisonAirborne" type="checkbox" checked> Show trajectories during the recorded driver's airborne phase only</label>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+<div><h4>Onboard motion trajectory — native units unverified</h4>
+<label>Native projection <select id="nativeProjection"><option value="xy">X–Y</option><option value="xz">X–Z</option><option value="yz">Y–Z</option></select></label>
+<canvas id="nativeTrajectory" style="height:260px" aria-label="Recorded onboard motion trajectory"></canvas></div>
+<div><h4>SLAM keyframe trajectory — arbitrary scale</h4>
+<label>SLAM projection <select id="slamProjection"><option value="xz">X–Z</option><option value="xy">X–Y</option><option value="yz">Y–Z</option></select></label>
+<canvas id="slamTrajectory" style="height:260px" aria-label="Estimated SLAM keyframe trajectory"></canvas></div>
+</div>
+<p>Each trajectory is fitted independently. Similar screen size does not imply equal distance. Green: first selected point; orange: last.</p>
+<h4>Position over recording time</h4>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+<div><p>Native onboard X/Y/Z — unverified units</p><canvas id="nativePosition" style="height:230px" aria-label="Native position over recording time"></canvas></div>
+<div><p>SLAM keyframe X/Y/Z — arbitrary units</p><canvas id="slamPosition" style="height:230px" aria-label="SLAM positions over recording time"></canvas></div>
+</div>
+<h4>Recorded IMU measurements</h4>
+<label>Signal <select id="imuSignal"><option value="acc">Acceleration (native units)</option><option value="gyro">Rotation rate (native units)</option><option value="quat">Orientation quaternion (raw q0/q1/q2/q3)</option></select></label>
+<canvas id="imuHistory" style="height:230px" aria-label="Recorded IMU signal history"></canvas>
+<h4>Telemetry age at each image</h4>
+<p>Blue: flight state; teal: log packet. Red dashed: 250 ms association cutoff. Age is based on host receipt, not hardware exposure synchronization.</p>
+<canvas id="ageHistory" style="height:230px" aria-label="Telemetry ages associated with recorded images"></canvas>
+<p id="comparisonMetrics"></p>
+<p>Chart markers: white = current video frame, orange = last exported SLAM frame (not necessarily a valid pose). Shading = recorded airborne phase; red bars = SLAM not tracking. Blank traces remain unavailable rather than estimated. Map export is throttled, so its marker can lag the processing counter.</p>
+</section>
+<script src="/motion_comparison.js"></script>
+<section class="map-card">
+<h3>Environment floor plan — combined experimental mapper</h3>
+<p>Telemetry-led drone position, YOLO labels, depth-assisted surfaces and SLAM landmark geometry. All placements are experimental. Coordinates use native onboard-motion units, not verified metres. Blank space is unknown; surface samples may include floors and are not confirmed obstacles.</p>
+<pre id="mapFusionStatus">Waiting for combined mapping inputs.</pre>
 <div class="map-toolbar">
-<button id="blocksConcept" aria-pressed="true">Concept preview</button><button id="blocksData" aria-pressed="false">Actual SLAM data</button>
-<button id="blocksFit">Fit map</button><button id="blocksReset">Reset view</button><button id="blocksTop">Top view</button>
-<label>Block detail <input id="blocksDetail" type="range" min="12" max="72" value="30"></label>
-<label><input id="blocksAuto" type="checkbox" checked> Auto-fit</label>
+<label>Projection <select id="floorPlane"><option value="xy">Native X–Y (floor direction unverified)</option><option value="xz">Native X–Z</option><option value="yz">Native Y–Z</option></select></label>
+<label>Rotate <input id="floorAngle" type="range" min="-180" max="180" value="0"></label>
+<label>Cell detail <input id="floorDetail" type="range" min="25" max="120" value="65"></label>
+<button id="floorFit">Fit map</button>
 </div>
-<canvas id="blockView" aria-label="Interactive concept preview or actual SLAM landmark data"></canvas>
-<p id="blocksSummary" class="map-caption">Waiting for SLAM landmarks.</p>
-<pre id="mapTelemetry" class="map-caption">Telemetry context is displayed separately; it is not fused into SLAM.</pre>
-</div>
-<script src="/slam_blocks.js"></script>
+<canvas id="floorView" aria-label="Rough two dimensional SLAM feature map and estimated camera path"></canvas>
+<label><input id="floorFeatures" type="checkbox"> Show supporting landmarks</label>
+<label><input id="floorSurfaces" type="checkbox" checked> Show depth-assisted surface evidence</label>
+<p id="floorObjects">Waiting for matching object and SLAM frames.</p>
+<details><summary>Mapped object evidence</summary><pre id="floorEvidence">Waiting for object geometry.</pre></details>
+<p id="floorSummary">Waiting for SLAM data.</p>
+</section>
+<canvas id="view" hidden style="display:none"></canvas>
+<pre id="mapTelemetry" hidden></pre>
+<script src="/floor_map.js?v=combined-1"></script>
 <script>
 const canvas=document.getElementById('view'),ctx=canvas.getContext('2d');
 let points=[],cameras=[],center=[0,0,0],radius=1;
@@ -207,6 +274,8 @@ async function refresh(){
   if(!response.ok)throw Error('Waiting for map');
   const data=await response.json();
   points=data.points;cameras=data.cameras;
+  if(window.motionComparison)window.motionComparison.setMap(data);
+  if(window.floorMapViewer)window.floorMapViewer.setData(points,cameras,data.state,data.timestamp,data.map_origin);
   if(window.slamBlockViewer)window.slamBlockViewer.setData(points,cameras);
   const age=Math.max(0,Date.now()/1000-data.timestamp);
   document.getElementById('status').textContent=
@@ -303,7 +372,9 @@ async function send(action=null){
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify({
       keys:active()?[...held]:[],action,
-      enabled:active(),mode:selectedMode
+      enabled:active(),mode:selectedMode,
+      launch_surface:document.getElementById('launchSurface').value,
+      table_height_cm:document.getElementById('tableHeight').value?Number(document.getElementById('tableHeight').value):null
     })
  });
  if(!response.ok)throw Error('Input request failed');
@@ -313,7 +384,12 @@ function stop(){
  inputStatus.textContent='Stopped — zero movement requested';
  send('stop').catch(()=>{inputStatus.textContent='Connection lost';});
 }
-pad.onclick=()=>pad.focus();
+pad.onclick=e=>{if(!e.target.closest('input,select,button'))pad.focus();};
+for(const id of ['launchSurface','tableHeight']){
+ document.getElementById(id).addEventListener('focus',()=>setControls(false));
+ document.getElementById(id).addEventListener('change',()=>send().catch(()=>{}));
+ document.getElementById(id).addEventListener('input',()=>send().catch(()=>{}));
+}
 window.onkeydown=e=>{
  if(!active())return;
  if(e.target instanceof HTMLElement&&e.target.closest('input,textarea,select'))return;
@@ -398,7 +474,8 @@ async function refreshControl(){
    `Control input: ${data.input_active?'active':'inactive'}\n`+
    `Commanded RC [slide, forward, up, yaw]: ${data.commanded_rc.join(', ')}\n`+
    `Native fast flag requested: ${data.native_fast_requested?'ON':'OFF'}\n`+
-   `Desired hover above table: 91 cm — automatic height limit OFF`;
+   `Launch surface: ${data.launch_surface??'unavailable'} | Table height: ${data.table_height_cm??'unknown'} cm — automatic height limit OFF`;
+  for(const id of ['launchSurface','tableHeight'])document.getElementById(id).disabled=data.phase!=='grounded'||!!window.TELLO_PLAYBACK_ONLY;
  }catch(error){
   document.getElementById('flightStatus').textContent=
    'Waiting for flight-driver status.';
@@ -406,7 +483,7 @@ async function refreshControl(){
  setTimeout(refreshControl,300);
 }
 refreshControl();
-document.getElementById('blocksDetail').addEventListener('focus',()=>{
+document.getElementById('floorDetail').addEventListener('focus',()=>{
  if(controlsEnabled)stop();
 });
 

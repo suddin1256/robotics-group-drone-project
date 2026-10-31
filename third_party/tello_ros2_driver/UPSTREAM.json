@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/PedroS235/tello_ros2_driver",
+  "commit": "9a2bef366ebe2a2e7b57ef170e4f7cafb483e8e8",
+  "license": "MIT",
+  "note": "Vendored sources are unmodified. Our adapter overrides lifecycle, control entry points and experimental telemetry serialization. install_tellopy.sh is retained for provenance only and is never run."
+}

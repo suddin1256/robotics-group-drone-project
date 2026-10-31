@@ -81,6 +81,7 @@ def main():
         deps = json.loads((ROOT / 'dependencies.json').read_text())['tellopy']
         run(core_python + ['-m', 'pip', 'install', '--no-deps', f"git+{deps['url']}@{deps['commit']}"])
         run(core_python + ['-c', 'import tellopy; assert hasattr(tellopy.Tello, "manual_takeoff"); print("TelloPy import OK; no connection started")'])
+        run([sys.executable,ROOT/'scripts/build_community_driver.py'])
     if 'vision' in features:
         venv = ROOT / 'vision/.venv'
         python = venv / 'bin/python'

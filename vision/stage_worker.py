@@ -15,6 +15,12 @@ def atomic_json(path, data):
     temporary.write_text(json.dumps(data))
     temporary.replace(path)
 
+def masks_json(result, names):
+    if result.boxes is None or result.masks is None:return []
+    return [{'label':names[int(cls)],'confidence':confidence,'polygon':polygon.tolist()}
+            for cls,confidence,polygon in zip(result.boxes.cls.tolist(),result.boxes.conf.tolist(),result.masks.xy)
+            if confidence >= .25 and len(polygon) >= 3]
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', choices=['objects', 'depth'], required=True)
@@ -55,13 +61,19 @@ def main():
         if args.stage == 'objects':
             from ultralytics import YOLO
             from rian_style import render
-            model_name = 'yolo11s-seg.pt'
+            model_name = 'yolo11n-seg.pt'
+            if not (models/model_name).exists():
+                raise RuntimeError('Nano model is not cached. While online, run vision/prepare_yolo.py with the vision Python environment.')
             model = YOLO(str(models/model_name))
         else:
             from transformers import pipeline
             from PIL import Image
             model_name = 'Intel/dpt-hybrid-midas'
             model = pipeline(task='depth-estimation', model=model_name, device=device)
+            # A lightweight semantic pass on this EXACT depth frame avoids combining
+            # a slow depth result with an unrelated newer YOLO mask.
+            from ultralytics import YOLO
+            depth_segmenter=YOLO(str(models/'yolo11n-seg.pt'))
         last_result.update(device=device, model=model_name)
         previous = 0
         processed = 0
@@ -70,7 +82,8 @@ def main():
         status('waiting', 'Model ready; waiting for a fresh frame.')
         while not stopping:
             read_start = time.monotonic()
-            packet = read_packet(folder/'frame.bin', previous)
+            packet = read_packet(folder/'frame.bin', previous,
+                                 max_age=0.35 if args.stage == 'objects' else 3)
             read_seconds = time.monotonic() - read_start
             if packet is None:
                 if time.monotonic() - last_idle > .5:
@@ -79,6 +92,10 @@ def main():
                 time.sleep(.01)
                 continue
             stamp, width, height, pixels = packet
+            source_stamp=stamp
+            try:
+                source_stamp=json.loads((folder/'frame-sources'/f'{round(stamp*1e6)}.json').read_text())['source_stamp']
+            except FileNotFoundError:pass
             previous = stamp
             frame = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 3).copy()
             frame_age_at_start = time.time() - stamp
@@ -93,6 +110,25 @@ def main():
                 inference_seconds = time.monotonic() - start
                 render_start = time.monotonic()
                 display, count = render(frame,result,model.names)
+                # Store masks in the ORIGINAL 320x240 image coordinates, not preview coordinates.
+                detections = []
+                if result.boxes is not None and result.masks is not None:
+                    for cls, confidence, polygon in zip(result.boxes.cls.tolist(), result.boxes.conf.tolist(), result.masks.xy):
+                        if confidence >= .25 and len(polygon) >= 3:
+                            detections.append({'label': model.names[int(cls)], 'confidence': confidence,
+                                               'polygon': polygon.tolist()})
+                source_stamp = stamp
+                try:
+                    metadata = json.loads((folder/'frame-sources'/f'{round(stamp*1e6)}.json').read_text())
+                    source_stamp = metadata['source_stamp']
+                except FileNotFoundError:
+                    pass
+                archive = folder/'detections'
+                archive.mkdir(exist_ok=True)
+                atomic_json(archive/f'{round(source_stamp*1e6)}.json',
+                            {'source_stamp': source_stamp, 'objects': detections})
+                for old in sorted(archive.glob('*.json'))[:-2048]:
+                    old.unlink(missing_ok=True)
             else:
                 with torch.inference_mode():
                     result = model(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
@@ -101,6 +137,20 @@ def main():
                 inference_seconds = time.monotonic() - start
                 render_start = time.monotonic()
                 raw = cv2.resize(raw, (width,height))
+                depth_folder=folder/'depth-frames';depth_folder.mkdir(exist_ok=True)
+                destination=depth_folder/f'{round(source_stamp*1e6)}.npz'
+                temporary=destination.with_suffix('.tmp')
+                with temporary.open('wb') as stream:
+                    np.savez_compressed(stream,depth=raw.astype(np.float32),source_stamp=source_stamp)
+                temporary.replace(destination)
+                with torch.inference_mode():
+                    semantic=depth_segmenter.predict(frame,conf=.25,imgsz=320,device=device,verbose=False)[0]
+                semantic_folder=folder/'depth-detections';semantic_folder.mkdir(exist_ok=True)
+                atomic_json(semantic_folder/f'{round(source_stamp*1e6)}.json',
+                            {'source_stamp':source_stamp,'objects':masks_json(semantic,depth_segmenter.names)})
+                for old in sorted(depth_folder.glob('*.npz'))[:-128]:
+                    old.unlink(missing_ok=True)
+                    (semantic_folder/(old.stem+'.json')).unlink(missing_ok=True)
                 normalized = cv2.normalize(raw,None,0,255,cv2.NORM_MINMAX).astype(np.uint8)
                 display = cv2.applyColorMap(normalized,cv2.COLORMAP_INFERNO)
                 count = None

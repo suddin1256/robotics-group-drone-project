@@ -9,6 +9,7 @@ __pycache__/
 *.avi
 *.mp4
 *.msg
+!third_party/tello_ros2_driver/tello_msgs/msg/*.msg
 orb_vocab.fbow
 .DS_Store
 vision/.venv/

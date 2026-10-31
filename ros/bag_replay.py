@@ -12,13 +12,23 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
 import rosbag2_py
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Imu, BatteryState, CompressedImage
+from nav_msgs.msg import Odometry
 from std_msgs.msg import String
+from motion_comparison import MotionComparison
 
 ALLOWED = {
     '/tello/image_raw': ('sensor_msgs/msg/Image', Image),
     '/tello/telemetry': ('std_msgs/msg/String', String),
     '/tello/control_status': ('std_msgs/msg/String', String),
+    '/tello/raw_log': ('std_msgs/msg/String', String),
+    '/tello/raw_log_packets': ('std_msgs/msg/String', String),
+    '/tello/image_metadata': ('std_msgs/msg/String', String),
+    '/tello/capabilities': ('std_msgs/msg/String', String),
+    '/tello/imu_unverified': ('sensor_msgs/msg/Imu', Imu),
+    '/tello/odometry_unverified': ('nav_msgs/msg/Odometry', Odometry),
+    '/tello/battery': ('sensor_msgs/msg/BatteryState', BatteryState),
+    '/tello/preview/compressed': ('sensor_msgs/msg/CompressedImage', CompressedImage),
 }
 
 class BagReplay(Node):
@@ -39,6 +49,7 @@ class BagReplay(Node):
         self.recorded_image_stamp = None
         self.delivery_image_stamp = None
         self.ordered = None
+        self.comparison=MotionComparison()
         if os.environ.get('TELLO_SLAM_ORDERED') == '1':
             from cv_bridge import CvBridge
             self.converter = CvBridge()
@@ -70,12 +81,18 @@ class BagReplay(Node):
         temporary.replace(self.folder / 'playback.json')
         message = String(); message.data = json.dumps(data)
         self.replay_publisher.publish(message)
+        comparison=self.comparison.snapshot(self.recorded_image_stamp)
+        comparison.update(playback_state=state,stamp_ns=time.time_ns())
+        temporary=self.folder/'comparison.tmp'
+        temporary.write_text(json.dumps(comparison,allow_nan=False))
+        temporary.replace(self.folder/'comparison.json')
 
     def publish_record(self, topic, payload, recording_stamp):
         message = deserialize_message(payload, ALLOWED[topic][1])
         now = time.time_ns()
         if topic == '/tello/image_raw':
             self.recorded_image_stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+            self.comparison.image(self.recorded_image_stamp)
             if self.ordered is not None:
                 frame = self.converter.imgmsg_to_cv2(message, desired_encoding='bgr8')
                 if frame.shape != (240,320,3):
@@ -86,16 +103,19 @@ class BagReplay(Node):
                 self.ordered.write(packet)
                 self.ordered.flush()
             self.delivery_image_stamp = now
+            if self.ordered is not None:
+                message.header.frame_id = 'tello_camera_optical_frame|source_ns=' + str(self.recorded_image_stamp)
             message.header.stamp.sec, message.header.stamp.nanosec = divmod(now, 1_000_000_000)
             self.image_count += 1
-        else:
+        elif isinstance(message, String):
             data = json.loads(message.data)
+            self.comparison.observe(topic,data,recording_stamp)
             data['recording_time_ns'] = recording_stamp
             data['replay'] = True
             if topic == '/tello/telemetry':
                 data['recorded_received_stamp_ns'] = data.get('received_stamp_ns')
                 data['received_stamp_ns'] = now
-            else:
+            elif topic == '/tello/control_status':
                 data['recorded_stamp_ns'] = data.get('stamp_ns')
                 data['stamp_ns'] = now
                 data['recorded_flight_enabled'] = data.get('flight_enabled')
@@ -103,6 +123,9 @@ class BagReplay(Node):
                 data['input_active'] = False
                 data['phase'] = 'PLAYBACK: ' + str(data.get('phase', 'unknown'))
             message.data = json.dumps(data)
+        elif hasattr(message, 'header'):
+            # Original stamps remain intact in the read-only bag and image metadata.
+            message.header.stamp.sec,message.header.stamp.nanosec=divmod(now,1_000_000_000)
         self.publishers_by_topic[topic].publish(message)
 
     def play(self):

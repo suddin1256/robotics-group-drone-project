@@ -1,118 +1,132 @@
 # Robotics group drone project
 
-## Team quick start
+Our robotics class project uses a Ryze Tello, ROS 2, Stella VSLAM, and Rian's V4 vision system. The dashboard shows the camera, telemetry, object detection, relative depth, and an experimental floor-plan map. We can fly manually or develop using recorded flights without connecting the drone.
 
-On macOS or Ubuntu inside Windows WSL2, after installing Git and Python 3:
+The connections and manual flight work. Mapping is still a work in progress: positions and distances are not yet reliable, and automatic obstacle avoidance is not implemented.
 
-```sh
+## First-time setup
+
+Install Git and Python 3 first. On Windows, use Ubuntu inside WSL2. See [laptop setup notes](docs/team-setup.md) for platform details.
+
+Run these while connected to the internet, before switching to the Tello Wi-Fi:
+
+```bash
 git clone https://github.com/suddin1256/robotics-group-drone-project.git
 cd robotics-group-drone-project
-python3 bootstrap.py --vision
-python3 start.py --demo --no-slam --vision
+python3 bootstrap.py --hardware --vision --slam
 ```
 
-Open **http://127.0.0.1:8082**. The first setup selects Intel Mac, Apple Silicon Mac or x86-64 Linux/WSL2 dependencies and prepares the models online. Omit `--vision` for a lighter ROS/dashboard-only install. Read **[platform setup instructions](docs/team-setup.md)** first, especially on Windows.
+Setup detects the supported platform and downloads the dependencies and models. The SLAM build can take a while; fresh builds on other laptops still need testing. If it fails, use `--no-slam` for camera and vision testing until the build is fixed.
 
-Demo images/telemetry are synthetic. For actual vision evaluation, replace `--demo` with `--replay /path/to/video.avi`. This does not need a drone. Replay/demo cannot enable flight.
+For later updates, stop the program and run:
 
-## Shared updates
-
-Dashboard: **Rian's V4 vision system** now uses the original contour/text style at normal camera-panel size. A second interactive **3D landmark blocks** view visualizes the sparse SLAM data. See [dashboard views and telemetry scope](docs/dashboard-views.md).
-
-For showing the planned obstacle-map appearance, open `ros/map_concept.html` in a browser. This interactive illustration uses synthetic shapes, requires no drone/models, and is explicitly separate from actual SLAM output.
-
-Performance work: `--vision` now runs YOLO and MiDaS independently. Recorded SLAM can process every image with `--slam-all-frames`. See [performance modes and profiling](docs/performance.md).
-
-Real recorded camera/telemetry playback with dashboard, V4 and SLAM is available through `--bag`. See [ROS bag playback](docs/bag-playback.md). Playback never sends recorded flight-control requests to a drone.
-
-Stop the program, then run:
-
-```sh
+```bash
 python3 update.py
 ```
 
-This pulls fast-forward changes, checks dependency fingerprints, and reruns setup only when dependencies changed. Selected features are remembered locally. Uncommitted edits cause it to stop rather than overwrite them. Code-only changes normally need no reinstall.
+This downloads code updates and reruns setup when dependencies change. It stops if you have uncommitted changes so it does not overwrite your work.
 
-Everyone can clone the public repo. Direct pushes require GitHub collaborator invitations; use branches and pull requests as described in CONTRIBUTING.md.
+## Commands
 
-## Current validation and limitations
+Run commands from the project folder. Open **[the dashboard](http://127.0.0.1:8082)** manually after starting.
 
-- The shared ROS dependency lock resolved on Intel macOS, Apple Silicon macOS and Linux/WSL2.
-- Eleven source/launcher tests passed. An end-to-end synthetic demo passed using the existing Intel Mac environment, including dashboard video, telemetry and flight-disabled status.
-- Fresh installs/runtime on Apple Silicon and Windows/WSL2 still need teammate verification. Top-level vision packages are pinned; transitive vision dependencies and model weights are not fully locked/checksummed.
-- **Stella's source build is optional and experimental:** run `python3 bootstrap.py --slam`. Cross-platform fresh builds/runtime are not yet verified. Use `--no-slam` until that laptop's build succeeds. The original Intel-Mac recipe is retained below.
-- Hardware access is optional: `python3 bootstrap.py --hardware`, then `python3 start.py --no-slam` for ground-only live camera/telemetry. Flight additionally requires `--enable-flight`. Direct Tello networking on WSL2 remains unverified.
-- Normal vision runs use cached Hugging Face files offline. Prepare models online before TELLO Wi-Fi.
-- Shadib's existing `--reuse-existing` launch remains available and preserves the original flight/SLAM setup. Do not delete the old folders yet.
+### Play a recorded flight with all systems
 
-## Prototype and legacy setup notes
-
-Optional teammate YOLO segmentation and MiDaS relative-depth view: see [vision setup](docs/vision.md).
-
-Original Ryze Tello, ROS 2 Jazzy, Stella VSLAM and a local browser dashboard.
-Working flight prototype; experimental sparse mapping. No autonomous navigation or collision avoidance is implemented.
-
-## Start on Shadib's existing Mac
-
-Land and stop the old four-terminal session first. From this repository:
-
-```sh
-python3 start.py --reuse-existing
+```bash
+python3 start.py --bag /path/to/recording_folder --slam-all-frames --vision
 ```
 
-This connects to Tello, starts ROS video/telemetry, SLAM and the dashboard, but **motor arming is disabled**.
-Open http://127.0.0.1:8082. Live hardware requires TELLO Wi-Fi.
+Use the whole ROS bag folder, not just its `.mcap` file. Playback uses real recorded video and telemetry and cannot fly the drone. Recordings are stored separately from GitHub; each teammate needs a local copy.
 
-For a deliberate flight session:
+On Shadib's Mac, using the existing environments and test recording:
 
-```sh
+```bash
 cd ~/Documents/robotics-group-drone-project
-python3 start.py --no-slam --enable-flight
+python3 start.py --reuse-existing \
+  --bag ~/Documents/tello-recordings/flight_20261031_130708 \
+  --slam-all-frames --vision
 ```
 
-Enable dashboard controls, press T to request motor arming, then hold W to lift.
-W/S: rise/descend; A/D: yaw; arrows: forward/back/slide; Space: zero movement request; L: landing request.
-Slow and Normal use different stick limits with native fast mode off; Fast requests native fast mode while airborne.
-40% battery: red warning. At 20%: steerable descent; W pauses downward input. Firmware can impose its own battery landing.
-There is no automatic ceiling or altitude limit. Landing after a network failure cannot be guaranteed.
-Land before Ctrl+C. The launcher stops the source first and allows its landing/shutdown logic time to run.
-Per-process output is saved in `logs/`. Another process exiting also triggers shutdown.
+Add `--rate 0.5` for half-speed playback. `--slam-all-frames` lets SLAM process every recorded image in order; the vision models process selected fresh frames independently.
 
-## Develop without a drone
+### Connect to the drone without enabling flight
 
-On the existing Mac:
+Turn on the Tello, connect the laptop to its TELLO Wi-Fi, and close other apps connected to the drone.
 
-```sh
-python3 start.py --reuse-existing --replay /absolute/path/to/video.avi
+```bash
+python3 start.py --driver community --vision
 ```
 
-Replay never imports a drone control library and cannot enable flight. It publishes recorded images and synthetic telemetry; keyboard commands update mock state only. Commands do not change the replay camera view. Restart SLAM when looping the recording breaks tracking.
-Use `--no-slam` for camera/dashboard work without a compiled SLAM dependency.
+This starts the camera, telemetry, SLAM, vision models, map, and dashboard. Motor arming is disabled.
 
-## Legacy standalone SLAM setup (experimental)
+### Fly with all systems and record the flight
 
-The legacy ros/ and slam/ environment locks target **Intel macOS (`osx-64`) only**. Apple Silicon, Linux and Windows require a separately verified environment; do not assume these locks work there.
-Install Git, Pixi and Python 3, then run:
-
-```sh
-python3 setup.py
-python3 start.py --replay /absolute/path/to/video.avi
+```bash
+python3 start.py --driver community --vision --enable-flight --record
 ```
 
+On Shadib's existing Mac setup:
 
+```bash
+cd ~/Documents/robotics-group-drone-project
+python3 start.py --reuse-existing --driver community --vision --enable-flight --record
+```
 
-## Layout and team ownership
+Recordings save to `~/Documents/tello-recordings/flight_<date_time>`. Leave off `--record` if you do not want to save a session.
 
-- `ros/tello_manual_launch.py`: sole hardware connection and flight command owner.
-- `ros/flight_dashboard.py`, `ros/dashboard.html`: browser UI and keyboard input.
-- `ros/slam_frame_bridge.py`: ROS frames/telemetry to the SLAM runtime.
-- `ros/replay.py`: recorded input and mock flight state.
-- `slam/src/tello_live_slam/`: C++ SLAM worker, map and annotated-image export.
-- `slam/assets/tello_320_dense.yaml`: provisional calibration for 320x240 BGR images.
-- `scripts/`: calibration/diagnostic tools preserved from the prototype. These still need path/config cleanup before use.
-- `runtime/`, `logs/`, `build/`, `local/`, `vendor/`: generated, excluded from Git.
+Enable controls in the dashboard, then use:
 
-See `CONTRIBUTING.md` for branches and updates, and `docs/architecture.md` and `docs/roadmap.md` before adding automation.
-Run `python3 -m unittest discover -s tests` for launcher safeguards.
+| Key | Control |
+| --- | --- |
+| T | Request motor arming |
+| W / S | Up / down; hold W to lift after arming |
+| A / D | Yaw left / right |
+| Up / Down arrows | Forward / backward |
+| Left / Right arrows | Slide left / right |
+| Space | Request neutral movement / manual takeover |
+| L | Request landing |
 
+Slow, Normal, and Fast modes are selected in the dashboard. The launch-surface selector records ground/table information; it does not enforce a height limit. At 40% battery the dashboard turns red; at 20% descent assistance activates. The drone's firmware may also impose landing.
 
+Land before pressing Ctrl+C. There is no automatic ceiling limit, and commands or landing cannot be guaranteed after a connection loss.
+
+### Quick test without a drone or recording
+
+```bash
+python3 start.py --demo --no-slam --vision
+```
+
+This uses synthetic images and telemetry to check the dashboard and connections, not mapping accuracy.
+
+## What changed
+
+- Rian added two vision models: YOLO for object detection and segmentation, and MiDaS for relative depth.
+- Worked on processing speed for Rian’s vision system by using a smaller YOLO model and running detection and depth separately.
+- Changed the original DIY driver to an adapted community Tello driver to access more telemetry and tools.
+- Added video and telemetry recording so the group can test using the same flights.
+- Connected Stella VSLAM to estimate the camera path and build a landmark map.
+- Added a simple experimental floor-plan map using available detections, landmarks, telemetry, and relative depth.
+- Added setup and update scripts for the group’s laptops.
+
+See [UPDATE_LOG.md](UPDATE_LOG.md) for more details.
+
+## Issues / next to fix
+
+- The vision system is not fully optimized and can still be very laggy.
+- MiDaS cannot keep up with the full video frame rate on our current setup.
+- Relative depth is not a measured distance. We still need to test and improve distance estimates.
+- SLAM can lose tracking, and the floor-plan objects are not consistently accurate.
+- Telemetry units, coordinate axes, and timing need checking before we trust them for mapping.
+- Telemetry and SLAM do not always agree. The map uses a visual fallback when they cannot be aligned.
+- We need more short, well-lit flight recordings with measured reference distances.
+- Setup and performance still need checking on each group member’s laptop.
+
+## Where things are
+
+- `ros/`: drone drivers, ROS nodes, recording playback, and dashboard.
+- `vision/`: YOLO, relative depth, and floor-plan mapping.
+- `slam/`: Stella VSLAM setup and our adapter.
+- `docs/`: extra setup and testing notes.
+- `logs/`: output from each running program, useful when something fails.
+
+Keep recordings, downloaded models, and installed environments out of Git. Shadib's `--reuse-existing` option still depends on the old `tello-ros2` and `tello-slam` folders, so do not delete those yet.

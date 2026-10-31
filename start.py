@@ -18,7 +18,7 @@ def plan(args):
     slam = Path.home() / 'Documents/tello-slam' if args.reuse_existing else ROOT / 'slam'
     slam_manifest = ROOT / 'environments/slam/pixi.toml' if portable else slam / 'pixi.toml'
     binary = slam / 'build/live/tello_live_slam' if args.reuse_existing else ROOT / 'build/live/tello_live_slam'
-    if getattr(args, 'slam_all_frames', False):
+    if not args.no_slam:
         binary = ROOT/'build/adapter-legacy/tello_live_slam' if args.reuse_existing else ROOT/'build/live/tello_live_slam'
     executable = pixi_executable() or 'pixi'
     run = [executable, 'run', '--manifest-path', str(manifest), 'python']
@@ -32,7 +32,8 @@ def plan(args):
     elif args.replay:
         source = run + [str(ROOT / 'ros/replay.py'), str(Path(args.replay).resolve())]
     else:
-        source = run + [str(ROOT / 'ros/tello_manual_launch.py')]
+        filename='community_driver.py' if getattr(args,'driver','legacy')=='community' else 'tello_manual_launch.py'
+        source = run + [str(ROOT / 'ros'/filename)]
         if args.enable_flight: source += ['--enable-flight']
     jobs = [('source', source),
             ('bridge', run + [str(ROOT / 'ros/slam_frame_bridge.py')]),
@@ -50,17 +51,31 @@ def plan(args):
             jobs.append(('vision',[python,str(ROOT/'vision/stage_worker.py'),'--stage','objects']))
             if mode == 'split':
                 jobs.append(('depth',[python,str(ROOT/'vision/stage_worker.py'),'--stage','depth']))
+            if not args.no_slam:
+                jobs.append(('floorplan',[python,str(ROOT/'vision/floorplan_worker.py')]))
+    if getattr(args,'record',False):
+        destination=Path(args.record_dir).expanduser() if getattr(args,'record_dir',None) else Path.home()/'Documents/tello-recordings'/time.strftime('flight_%Y%m%d_%H%M%S')
+        jobs.append(('recorder',run+[str(ROOT/'ros/record_session.py'),'bag','record',
+                                 '-s','mcap','-o',str(destination),
+                                 '/tello/image_raw','/tello/preview/compressed','/tello/telemetry',
+                                 '/tello/control_status','/tello/manual_control','/tello/flight_data',
+                                 '/tello/raw_log','/tello/raw_log_packets','/tello/imu_unverified','/tello/odometry_unverified',
+                                 '/tello/battery','/tello/image_metadata','/tello/capabilities','/tello/tools']))
     return jobs, binary
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--enable-flight', action='store_true')
+    p.add_argument('--driver',choices=['legacy','community'],default='community',help='Adapted community telemetry backend by default; legacy remains available')
+    p.add_argument('--record',action='store_true',help='Record video and telemetry to a new ROS bag')
+    p.add_argument('--record-dir',type=Path,help='New bag output directory (must not already exist)')
     p.add_argument('--replay', metavar='VIDEO')
     p.add_argument('--bag', metavar='BAG_FOLDER', help='Replay real recorded images/telemetry; no drone driver')
     p.add_argument('--rate', type=float, default=1.0, help='ROS bag playback speed, default 1.0')
     p.add_argument('--duration', type=float, help='Stop offline replay/demo automatically after this many seconds')
     p.add_argument('--runtime-dir', type=Path, help='Separate runtime workspace for offline tests')
     p.add_argument('--port', type=int, default=8082, help='Local dashboard port')
+    p.add_argument('--domain-id',type=int,help='Offline tests only: isolate ROS discovery from other running sessions')
     p.add_argument('--demo', action='store_true', help='Built-in synthetic camera/telemetry; no drone or recording needed')
     p.add_argument('--portable', action='store_true', help='Use the shared core environment installed by bootstrap.py')
     p.add_argument('--reuse-existing', action='store_true', help='Use original Mac environments and compiled SLAM')
@@ -72,6 +87,11 @@ def main():
     p.add_argument('--dry-run', action='store_true', help='Print startup plan; start nothing')
     args = p.parse_args()
     offline = bool(args.replay or args.demo or args.bag)
+    if args.domain_id is not None and (not offline or not 0<=args.domain_id<=232):
+        p.error('--domain-id requires offline replay/demo and a value from 0 to 232.')
+    if args.record and offline:p.error('--record is for live capture; original replay bags stay read-only.')
+    if args.record_dir and not args.record:p.error('--record-dir requires --record.')
+    if args.record_dir and args.record_dir.expanduser().exists():p.error('Recording directory already exists; choose a new name.')
     if offline and args.enable_flight: p.error('Replay/demo/bag cannot enable flight.')
     if sum(map(bool, [args.replay, args.demo, args.bag])) > 1: p.error('Choose --demo, --replay or --bag, not multiple sources.')
     if not math.isfinite(args.rate) or args.rate <= 0: p.error('--rate must be positive and finite.')
@@ -96,11 +116,16 @@ def main():
     if args.vision and not (ROOT/'vision/.venv/bin/python').is_file(): p.error('Vision environment missing; see docs/vision.md.')
     if args.replay and not Path(args.replay).is_file(): p.error('Replay video does not exist.')
     if args.bag and not Path(args.bag).is_dir(): p.error('Bag folder does not exist.')
-    if args.slam_all_frames:
+    if not args.no_slam:
         command = [sys.executable,str(ROOT/'scripts/build_slam_adapter.py')]
         if args.reuse_existing: command += ['--reuse-existing']
         try: subprocess.run(command,check=True)
         except subprocess.CalledProcessError: p.error('Could not rebuild the ordered SLAM adapter; inspect compiler output.')
+    if not offline and args.driver=='community':
+        command=[sys.executable,str(ROOT/'scripts/build_community_driver.py')]
+        if args.reuse_existing:command+=['--reuse-existing']
+        try:subprocess.run(command,check=True)
+        except subprocess.CalledProcessError:p.error('Community message build failed; inspect compiler output.')
     if not args.no_slam and not binary.is_file(): p.error('Build SLAM first, or use --no-slam.')
     work = args.runtime_dir.resolve() if args.runtime_dir else ROOT / 'runtime'
     (work / 'live').mkdir(parents=True, exist_ok=True)
@@ -112,10 +137,22 @@ def main():
         if not vocabulary.is_file(): p.error('Missing ORB vocabulary; run setup.py first.')
         shutil.copy2(vocabulary,work/'assets/orb_vocab.fbow')
     # Never display a previous session as a current live map.
+    for directory in ['frame-sources', 'detections', 'observations', 'frame-telemetry', 'depth-frames', 'depth-detections']:
+        shutil.rmtree(work/'live'/directory, ignore_errors=True)
+    (work/'live'/'floorplan.json').unlink(missing_ok=True)
     for name in ['map.json','telemetry.json','frame.bin','video.jpg','preview.jpg','vision.jpg','vision-status.json','playback.json',
-                 'depth.jpg','depth-status.json','slam-status.json','slam-input.bin','slam-input.done']:
+                 'depth.jpg','depth-status.json','slam-status.json','slam-input.bin','slam-input.done',
+                 'driver-data.json','image-metadata.json','comparison.json']:
         (work/'live'/name).unlink(missing_ok=True)
-    env = dict(os.environ, TELLO_RUNTIME_DIR=str(work/'live'), ROS_DOMAIN_ID='43' if args.bag else '42')
+    domain=args.domain_id if args.domain_id is not None else (43 if args.bag else 42)
+    env = dict(os.environ, TELLO_RUNTIME_DIR=str(work/'live'), ROS_DOMAIN_ID=str(domain))
+    env.setdefault('ROS_LOG_DIR',str(ROOT/'logs/ros'))
+    community_prefix=ROOT/'local/community'
+    sites=list((community_prefix/'lib').glob('python*/site-packages'))
+    env['PYTHONPATH']=os.pathsep.join([*(str(s) for s in sites),env.get('PYTHONPATH','')])
+    env['AMENT_PREFIX_PATH']=str(community_prefix)+os.pathsep+env.get('AMENT_PREFIX_PATH','')
+    for variable in ['DYLD_LIBRARY_PATH','LD_LIBRARY_PATH']:
+        env[variable]=str(community_prefix/'lib')+os.pathsep+env.get(variable,'')
     env['TELLO_PLAYBACK_ONLY'] = '1' if args.bag else '0'
     env['TELLO_WAIT_FOR_VISION'] = '1' if args.bag and args.vision else '0'
     env['TELLO_VISION_SPLIT'] = '1' if args.vision and args.vision_mode == 'split' else '0'
@@ -143,7 +180,7 @@ def main():
             process=subprocess.Popen(command,cwd=work,env=env,stdout=handle,stderr=subprocess.STDOUT,start_new_session=True)
             children.append((name,process))
         print(f'Dashboard: http://127.0.0.1:{args.port} | logs:', ROOT/'logs', flush=True)
-        if args.bag: print('BAG PLAYBACK: ROS domain 43; controls disabled; original recording is read-only.', flush=True)
+        if args.bag: print(f'BAG PLAYBACK: ROS domain {domain}; controls disabled; original recording is read-only.', flush=True)
         print('Flight ENABLED' if args.enable_flight else 'Flight disabled / replay; motor arming blocked',flush=True)
         print('Land before closing. Ctrl+C requests shutdown; it cannot guarantee landing after link loss.',flush=True)
         deadline = time.monotonic() + args.duration if args.duration else None
@@ -152,7 +189,7 @@ def main():
                 break
             for name, child in children:
                 if name in failed_optional: continue
-                if child.poll() is not None and name in {'vision','depth'}:
+                if child.poll() is not None and name in {'vision','depth','floorplan'}:
                     print(f'{name} worker exited; camera/control continue. See its log.', flush=True)
                     failed_optional.add(name)
                     continue

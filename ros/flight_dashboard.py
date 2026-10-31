@@ -17,6 +17,9 @@ actions = deque()
 last_input = 0.0
 input_enabled = False
 selected_mode = "slow"
+launch_surface = "ground"
+table_height_cm = None
+tools = deque()
 control_status = "{}"
 live_folder = Path(os.environ["TELLO_RUNTIME_DIR"])
 allowed = {"w", "s", "a", "d", "ArrowUp", "ArrowDown",
@@ -31,8 +34,8 @@ if PLAYBACK_ONLY:
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == '/slam_blocks.js':
-            body = Path(__file__).with_name('slam_blocks.js').read_bytes()
+        if path in {'/slam_blocks.js', '/floor_map.js', '/motion_comparison.js'}:
+            body = Path(__file__).with_name(path[1:]).read_bytes()
             content_type = 'application/javascript; charset=utf-8'
         elif path == "/control.json":
             with lock:
@@ -41,7 +44,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path in {
             "/video.jpg", "/preview.jpg", "/map.json", "/telemetry.json",
             "/vision.jpg", "/vision-status.json", "/playback.json",
-            "/depth.jpg", "/depth-status.json", "/slam-status.json"
+            "/depth.jpg", "/depth-status.json", "/slam-status.json",
+            "/floorplan.json", "/driver-data.json", "/image-metadata.json", "/comparison.json"
         }:
             try:
                 body = (live_folder / path[1:]).read_bytes()
@@ -76,11 +80,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        global keys, last_input, input_enabled, selected_mode
+        global keys, last_input, input_enabled, selected_mode, launch_surface, table_height_cm
         if PLAYBACK_ONLY:
             self.send_error(403, 'Flight controls disabled during bag playback')
             return
-        if self.path != "/input":
+        if self.path not in {"/input", "/tool"}:
             self.send_error(404)
             return
         try:
@@ -88,6 +92,11 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < length <= 2048:
                 raise ValueError("Invalid request size")
             data = json.loads(self.rfile.read(length))
+            if self.path == '/tool':
+                if data.get('tool')!='exposure' or type(data.get('value')) is not int or data['value'] not in {0,1,2}:
+                    raise ValueError('Unsupported tool')
+                with lock:tools.append(data)
+                self.send_response(204);self.end_headers();return
             requested = data.get("keys", [])
             if not isinstance(requested, list):
                 raise ValueError("Invalid keys")
@@ -97,6 +106,11 @@ class Handler(BaseHTTPRequestHandler):
                 mode = data.get("mode", "slow")
                 if mode in {"slow", "normal", "fast", "descent"}:
                     selected_mode = mode
+                surface=data.get('launch_surface','ground')
+                if surface not in {'ground','table'}:raise ValueError('Invalid launch surface')
+                launch_surface=surface
+                height=data.get('table_height_cm')
+                table_height_cm=(float(height) if type(height) in {int,float} and 0 < height <= 300 else None)
 
                 last_input = time.monotonic()
                 action = data.get("action")
@@ -118,6 +132,7 @@ class ManualControl(Node):
         self.publisher = None if PLAYBACK_ONLY else self.create_publisher(
             String, "/tello/manual_control", 10
         )
+        self.tools_publisher = None if PLAYBACK_ONLY else self.create_publisher(String,'/tello/tools',10)
         self.driver_status_subscription = self.create_subscription(
             String, "/tello/control_status", self.receive_driver_status, 10
         )
@@ -138,6 +153,11 @@ class ManualControl(Node):
             mode = selected_mode
             pending = list(actions)
             actions.clear()
+            surface,height=launch_surface,table_height_cm
+            requests=list(tools);tools.clear()
+        for request in requests:
+            request['sent_stamp_ns']=time.time_ns()
+            tool=String();tool.data=json.dumps(request);self.tools_publisher.publish(tool)
 
         speed = 20 if mode == "slow" else 35
         rc = [
@@ -153,7 +173,8 @@ class ManualControl(Node):
             "rc": rc,
             "input_fresh": fresh,
             "sent_stamp_ns": time.time_ns(),
-            "actions": pending
+            "actions": pending,
+            "launch_surface":surface,"table_height_cm":height
         })
         self.publisher.publish(message)
 

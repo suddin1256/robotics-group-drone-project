@@ -10,5 +10,9 @@
   "tellopy": {
     "url": "https://github.com/hanyazou/TelloPy.git",
     "commit": "47f02a4749cb5d3f41ef83cffeaeba9a3c776e71"
+  },
+  "tello_ros2_driver": {
+    "url": "https://github.com/PedroS235/tello_ros2_driver",
+    "commit": "9a2bef366ebe2a2e7b57ef170e4f7cafb483e8e8"
   }
 }

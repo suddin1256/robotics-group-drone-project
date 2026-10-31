@@ -9,7 +9,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 
 folder = Path(os.environ["TELLO_RUNTIME_DIR"])
@@ -23,11 +23,38 @@ class FrameBridge(Node):
             String, "/tello/telemetry", self.receive_telemetry, 10
         )
         self.count = 0
+        self.driver_data_subscription=self.create_subscription(String,'/tello/capabilities',
+            lambda message:self.save_json('driver-data',message),10)
+        self.metadata_subscription=self.create_subscription(String,'/tello/image_metadata',
+            lambda message:self.save_json('image-metadata',message),30)
         self.last_report = time.monotonic()
+        self.last_preview = 0.0
+        self.preview_subscription = self.create_subscription(
+            CompressedImage, '/tello/preview/compressed', self.receive_preview, 1
+        )
         self.subscription = self.create_subscription(
             Image, "/tello/image_raw", self.receive,
             qos_profile_sensor_data
         )
+
+    def save_json(self, name, message):
+        data=json.loads(message.data)
+        temporary=folder/(name+'.bridge.tmp')
+        temporary.write_text(json.dumps(data));temporary.replace(folder/(name+'.json'))
+        if name=='image-metadata':
+            archive=folder/'frame-telemetry';archive.mkdir(exist_ok=True)
+            target=archive/f'{round(data["image_stamp_ns"]/1000)}.json'
+            temp=target.with_suffix('.tmp');temp.write_text(json.dumps(data));temp.replace(target)
+            for old in sorted(archive.glob('*.json'))[:-4096]:old.unlink(missing_ok=True)
+
+    def receive_preview(self, message):
+        age = time.time() - (message.header.stamp.sec + message.header.stamp.nanosec * 1e-9)
+        if not -0.5 <= age <= 0.5:
+            return
+        preview = folder / 'video.tmp'
+        preview.write_bytes(bytes(message.data))
+        preview.replace(folder / 'video.jpg')
+        self.last_preview = time.monotonic()
 
     def receive_telemetry(self, message):
         data = json.loads(message.data)
@@ -50,13 +77,25 @@ class FrameBridge(Node):
         packet = struct.pack("<dII", timestamp, 320, 240)
         packet += frame.tobytes()
 
+        # Immutable metadata keyed to this exact delivered packet, before publication.
+        sources = folder / 'frame-sources'
+        sources.mkdir(exist_ok=True)
+        source_stamp = timestamp
+        if '|source_ns=' in message.header.frame_id:
+            source_stamp = int(message.header.frame_id.rsplit('|source_ns=', 1)[1]) / 1e9
+        source_file = sources / f'{round(timestamp * 1e6)}.json'
+        source_file.write_text(json.dumps({'source_stamp': source_stamp}))
+        if self.count % 75 == 0:
+            for old in sorted(sources.glob('*.json'))[:-2048]:
+                old.unlink(missing_ok=True)
+
         temporary = folder / "frame.tmp"
         temporary.write_bytes(packet)
         temporary.replace(folder / "frame.bin")
         ok, jpeg = cv2.imencode(
             ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80]
         )
-        if ok:
+        if ok and time.monotonic() - self.last_preview > 1:
             preview = folder / "video.tmp"
             preview.write_bytes(jpeg.tobytes())
             preview.replace(folder / "video.jpg")

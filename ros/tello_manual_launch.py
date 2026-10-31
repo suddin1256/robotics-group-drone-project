@@ -11,13 +11,13 @@ import tellopy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import String
 
 
 class ManualLaunch(Node):
     def __init__(self, enabled):
-        super().__init__("tello_manual_launch")
+        Node.__init__(self, "tello_manual_launch")
         self.enabled = enabled
         self.lock = threading.Lock()
         self.done = threading.Event()
@@ -28,6 +28,9 @@ class ManualLaunch(Node):
         self.state_time = 0.0
         self.state_stamp = 0
         self.frame = None
+        self.frame_stamp_ns = 0
+        self.launch_surface = "ground"
+        self.table_height_cm = None
         self.frame_sequence = 0
         self.published_sequence = -1
         self.last_input = 0.0
@@ -46,6 +49,9 @@ class ManualLaunch(Node):
 
         self.images = self.create_publisher(
             Image, "/tello/image_raw", qos_profile_sensor_data
+        )
+        self.preview_images = self.create_publisher(
+            CompressedImage, "/tello/preview/compressed", 1
         )
         self.telemetry = self.create_publisher(String, "/tello/telemetry", 10)
         self.status = self.create_publisher(String, "/tello/control_status", 10)
@@ -86,6 +92,12 @@ class ManualLaunch(Node):
             return
 
         with self.lock:
+            surface = request.get('launch_surface', 'ground')
+            height = request.get('table_height_cm')
+            if self.phase == 'grounded' and surface in {'ground', 'table'}:
+                self.launch_surface = surface
+                self.table_height_cm = (float(height) if surface == 'table' and
+                                        type(height) in {int, float} and 0 < height <= 300 else None)
             # Landing remains available with keyboard controls disabled.
             if "land" in actions:
                 self.actions.append("land")
@@ -276,11 +288,12 @@ class ManualLaunch(Node):
                 if self.done.is_set():
                     break
                 rgb = cv2.resize(
-                    frame.to_ndarray(format="rgb24"), (320, 240),
+                    frame.to_ndarray(format="rgb24"), (640, 480),
                     interpolation=cv2.INTER_AREA
                 )
                 with self.lock:
                     self.frame = rgb
+                    self.frame_stamp_ns = time.time_ns()
                     self.frame_sequence += 1
         except Exception as error:
             if not self.done.is_set():
@@ -293,13 +306,24 @@ class ManualLaunch(Node):
         with self.lock:
             image = self.frame
             sequence = self.frame_sequence
+            frame_stamp_ns = self.frame_stamp_ns
         if image is None or sequence == self.published_sequence:
             return
-        message = self.converter.cv2_to_imgmsg(image, encoding="rgb8")
-        message.header.stamp = self.get_clock().now().to_msg()
+        small = cv2.resize(image, (320, 240), interpolation=cv2.INTER_AREA)
+        message = self.converter.cv2_to_imgmsg(small, encoding="rgb8")
+        message.header.stamp.sec, message.header.stamp.nanosec = divmod(frame_stamp_ns, 1_000_000_000)
         message.header.frame_id = "tello_camera_optical_frame"
         self.images.publish(message)
+        ok, jpeg = cv2.imencode('.jpg', cv2.cvtColor(image, cv2.COLOR_RGB2BGR),
+                                [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if ok:
+            preview = CompressedImage()
+            preview.header = message.header
+            preview.format = 'jpeg'
+            preview.data = jpeg.tobytes()
+            self.preview_images.publish(preview)
         self.published_sequence = sequence
+        self.last_published_frame = (frame_stamp_ns, sequence)
 
     def publish_status(self):
         with self.lock:
@@ -330,7 +354,9 @@ class ManualLaunch(Node):
             "native_fast_requested": bool(self.drone.fast_mode),
             "reported_motor_flag": native.get("em_open"),
             "reported_airborne_flag": native.get("em_sky"),
-            "automatic_height_limit": False
+            "automatic_height_limit": False,
+            "launch_surface": self.launch_surface,
+            "table_height_cm": self.table_height_cm
         })
         self.status.publish(status)
 
@@ -361,19 +387,26 @@ class ManualLaunch(Node):
         self.drone.quit()
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--enable-flight", action="store_true")
-args = parser.parse_args()
+def main(node_class=ManualLaunch):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--enable-flight", action="store_true")
+    parser.add_argument("--check", action="store_true", help="Import check only; never connect")
+    args = parser.parse_args()
+    if args.check:
+        print('Driver imports OK; no hardware connection started.')
+        return
+    rclpy.init()
+    node = node_class(args.enable_flight)
+    try:
+        node.start()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.close()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
-rclpy.init()
-node = ManualLaunch(args.enable_flight)
-try:
-    node.start()
-    rclpy.spin(node)
-except KeyboardInterrupt:
-    pass
-finally:
-    node.close()
-    node.destroy_node()
-    if rclpy.ok():
-        rclpy.shutdown()
+if __name__ == '__main__':
+    main()
