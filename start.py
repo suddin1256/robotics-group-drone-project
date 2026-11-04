@@ -50,7 +50,10 @@ def plan(args):
         else:
             jobs.append(('vision',[python,str(ROOT/'vision/stage_worker.py'),'--stage','objects']))
             if mode == 'split':
-                jobs.append(('depth',[python,str(ROOT/'vision/stage_worker.py'),'--stage','depth']))
+                depth = [python,str(ROOT/'vision/stage_worker.py'),'--stage','depth']
+                if getattr(args,'depth_model','midas') != 'midas':
+                    depth[2:2] = ['--depth-model',args.depth_model]
+                jobs.append(('depth',depth))
             if not args.no_slam:
                 jobs.append(('floorplan',[python,str(ROOT/'vision/floorplan_worker.py')]))
     if getattr(args,'record',False):
@@ -83,6 +86,8 @@ def main():
     p.add_argument('--vision', action='store_true', help='Optional V4 segmentation and relative depth')
     p.add_argument('--vision-mode', choices=['split','objects-only','combined'], default='split',
                    help='Independent YOLO/depth by default; combined retains original V4 behavior')
+    p.add_argument('--depth-model', choices=['midas','depth-anything'], default='midas',
+                   help='Split-mode depth: MiDaS, or faster Depth Anything V2 Small via ONNX (not on Intel Mac)')
     p.add_argument('--slam-all-frames', action='store_true', help='Bag only: feed every recorded frame to SLAM in order, even if it falls behind')
     p.add_argument('--dry-run', action='store_true', help='Print startup plan; start nothing')
     args = p.parse_args()
@@ -100,6 +105,10 @@ def main():
     if not 1 <= args.port <= 65535: p.error('Invalid dashboard port.')
     if args.slam_all_frames and (not args.bag or args.no_slam): p.error('--slam-all-frames requires --bag with SLAM enabled.')
     if args.portable and args.reuse_existing: p.error('--portable and --reuse-existing select different environments.')
+    if args.depth_model != 'midas' and not (args.vision and args.vision_mode == 'split'):
+        p.error('--depth-model requires --vision in split mode.')
+    if args.depth_model == 'depth-anything' and host_platform() == 'osx-64':
+        p.error('Depth Anything needs ONNX Runtime, which has no current Intel Mac build; use the default MiDaS.')
     jobs, binary = plan(args)
     if args.dry_run:
         for name, command in jobs: print(name, command)

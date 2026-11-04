@@ -23,6 +23,20 @@ class PerformanceModes(unittest.TestCase):
         self.assertEqual(jobs['depth'][-1],'depth')
         self.assertNotIn('--max-fps',jobs['vision'])
 
+    def test_depth_model_defaults_to_midas_and_passes_choice(self):
+        jobs,_=start.plan(self.args())
+        self.assertNotIn('--depth-model',dict(jobs)['depth'])
+        jobs,_=start.plan(self.args(depth_model='depth-anything'))
+        depth=dict(jobs)['depth']
+        self.assertEqual(depth[depth.index('--depth-model')+1],'depth-anything')
+        self.assertEqual(depth[-1],'depth')
+
+    def test_depth_model_requires_split_vision(self):
+        for extra in ([],['--vision','--vision-mode','objects-only']):
+            result=subprocess.run([sys.executable,str(ROOT/'start.py'),'--demo','--no-slam',
+                                   '--depth-model','depth-anything','--dry-run']+extra,capture_output=True)
+            self.assertEqual(result.returncode,2)
+
     def test_objects_only_does_not_start_depth(self):
         jobs,_=start.plan(self.args(vision_mode='objects-only'))
         self.assertNotIn('depth',dict(jobs))
