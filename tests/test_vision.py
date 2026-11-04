@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('frame_io', ROOT/'vision/frame_io.py')
 frame_io = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frame_io)
+spec = importlib.util.spec_from_file_location('depth_anything', ROOT/'vision/depth_anything.py')
+depth_anything = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(depth_anything)
 spec = importlib.util.spec_from_file_location('launcher_vision', ROOT/'start.py')
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
@@ -32,6 +35,14 @@ class VisionIntegration(unittest.TestCase):
         path = Mock()
         path.read_bytes.side_effect = FileNotFoundError
         self.assertIsNone(frame_io.read_packet(path))
+
+    def test_depth_anything_input_is_patch_aligned_and_keeps_aspect(self):
+        self.assertEqual(depth_anything.input_shape(320, 240), (322, 238))
+        self.assertEqual(depth_anything.input_shape(1280, 720, 266), (476, 266))
+        for width, height in [(320, 240), (640, 480), (100, 7)]:
+            columns, rows = depth_anything.input_shape(width, height)
+            self.assertEqual((columns % 14, rows % 14), (0, 0))
+            self.assertGreaterEqual(min(columns, rows), 14)
 
     def test_optional_vision_is_separate_process_with_no_flight_flag(self):
         jobs, _ = launcher.plan(SimpleNamespace(reuse_existing=True, replay='sample.avi',
