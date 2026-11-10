@@ -26,6 +26,28 @@ The temporary spool duplicates image data on disk, about 390 MiB for this record
 
 Use the same recording, playback rate and resolution for comparisons. The JSON files `vision-status.json`, `depth-status.json` and `slam-status.json` contain diagnostic counters/timings. Each image's own timestamp is shown; a fast YOLO result and an older depth result are not presented as a synchronized measurement.
 
+## Optional Depth Anything depth model
+
+`--vision --depth-model depth-anything` replaces MiDaS in the split-mode depth worker with Depth Anything V2 Small (`onnx-community/depth-anything-v2-small`, int8 ONNX, Apache-2.0) on ONNX Runtime CPU. YOLO, the dashboard and the combined V4 mode are unchanged; MiDaS stays the default.
+
+```sh
+python3 start.py --demo --no-slam --vision --depth-model depth-anything
+```
+
+Its runtime is in `requirements-portable.txt` (Apple Silicon, Linux/WSL2). ONNX Runtime 1.31 has no Intel macOS build, so the launcher rejects this option on Intel Macs. Model preparation (`bootstrap.py --vision`) downloads the weights online; normal runs load the cached file offline.
+
+The input is 322x238, the nearest patch-aligned size to the 320x240 bridge frame; larger inputs only upscale the same pixels. CoreML was slower than CPU for this model, so it is not used; the depth worker's exact-frame YOLO pass still uses MPS. Output is still relative inverse depth, normalized per image for display, not meters. The floor-plan worker fits it to SLAM depth the same way as MiDaS.
+
+On an 8GB M1, a 72-second recorded flight replayed with `--bag ... --slam-all-frames --vision` (SLAM, YOLO, depth and floor plan running together) gave:
+
+| | Depth Anything | MiDaS (MPS) |
+|---|---|---|
+| Depth output rate | 5.7 FPS (0.12 s inference) | 2.4 FPS (0.29 s) |
+| Freshest-frame YOLO rate | 13.1 FPS | 9.8 FPS |
+| Saved depth frames fitting SLAM depth | 119 of 119 with SLAM data, median error 3.2% | 48 of 70, median error 4.4% |
+
+One recording, one laptop; SLAM varies between runs. A fitted depth relationship is still not a measured distance.
+
 ## Obstacle-detection scope
 
 Current YOLO weights segment learned object categories; they do not identify every possible obstacle, wall, wire or transparent surface. MiDaS is relative depth, not calibrated clearance. The split views do not compute object distances or fuse asynchronous depth with masks. Neither path sends flight commands. Reliable avoidance requires separate evaluation of latency, missed obstacles, depth/pose uncertainty, stopping distance and failure behavior before connecting perception to control.

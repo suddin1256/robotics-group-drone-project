@@ -55,6 +55,11 @@ def main():
 
         if args.prepare:
             process(np.zeros((240, 320, 3), dtype=np.uint8), segmenter, depth, device)
+            # Optional ONNX depth model; its runtime is not installed on Intel Macs.
+            import importlib.util
+            if importlib.util.find_spec('onnxruntime'):
+                from depth_anything import DepthAnything
+                DepthAnything(download=True).predict(np.zeros((240, 320, 3), dtype=np.uint8))
             write_status(folder, state='ready', message='Models cached and inference warm-up passed.')
             print('Models cached and inference warm-up passed.', flush=True)
             return 0

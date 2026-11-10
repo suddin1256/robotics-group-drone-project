@@ -30,6 +30,19 @@ This downloads code updates and reruns setup when dependencies change. It stops 
 
 Run commands from the project folder. Open **[the dashboard](http://127.0.0.1:8082)** manually after starting.
 
+Update from Nahil (11-03-2026):
+Add `--depth-model depth-anything` to any `--vision` command for faster relative depth (Depth Anything V2 Small through ONNX Runtime instead of MiDaS; not on Intel Macs). See [performance modes](docs/performance.md#optional-depth-anything-depth-model).
+
+To start with this model:
+```bash
+python3 start.py --driver community --vision --depth-model depth-anything
+```
+
+Fly and Record:
+```bash
+python3 start.py --driver community --vision --depth-model depth-anything --enable-flight --record
+```
+
 ### Play a recorded flight with all systems
 
 ```bash

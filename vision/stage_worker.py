@@ -25,6 +25,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', choices=['objects', 'depth'], required=True)
     parser.add_argument('--max-fps', type=float, default=15)
+    parser.add_argument('--depth-model', choices=['midas', 'depth-anything'], default='midas',
+                        help='depth stage only: MiDaS DPT-Hybrid or Depth Anything V2 Small (ONNX, CPU)')
     args = parser.parse_args()
     folder = Path(os.environ.get('TELLO_RUNTIME_DIR', str(ROOT/'runtime/live')))
     folder.mkdir(parents=True, exist_ok=True)
@@ -66,15 +68,22 @@ def main():
                 raise RuntimeError('Nano model is not cached. While online, run vision/prepare_yolo.py with the vision Python environment.')
             model = YOLO(str(models/model_name))
         else:
-            from transformers import pipeline
-            from PIL import Image
-            model_name = 'Intel/dpt-hybrid-midas'
-            model = pipeline(task='depth-estimation', model=model_name, device=device)
+            if args.depth_model == 'depth-anything':
+                from depth_anything import DepthAnything, REPO, MODEL_FILE
+                model_name = f'{REPO}/{MODEL_FILE}'
+                model = DepthAnything()
+            else:
+                from transformers import pipeline
+                from PIL import Image
+                model_name = 'Intel/dpt-hybrid-midas'
+                model = pipeline(task='depth-estimation', model=model_name, device=device)
             # A lightweight semantic pass on this EXACT depth frame avoids combining
             # a slow depth result with an unrelated newer YOLO mask.
             from ultralytics import YOLO
             depth_segmenter=YOLO(str(models/'yolo11n-seg.pt'))
-        last_result.update(device=device, model=model_name)
+        # Depth Anything runs on ONNX Runtime CPU; only its YOLO pass uses `device`.
+        shown_device = f'cpu (YOLO: {device})' if args.stage == 'depth' and args.depth_model == 'depth-anything' else device
+        last_result.update(device=shown_device, model=model_name)
         previous = 0
         processed = 0
         last_idle = 0
@@ -130,10 +139,13 @@ def main():
                 for old in sorted(archive.glob('*.json'))[:-2048]:
                     old.unlink(missing_ok=True)
             else:
-                with torch.inference_mode():
-                    result = model(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
-                raw = result['predicted_depth'].squeeze().detach().cpu().numpy()
-                sync()
+                if args.depth_model == 'depth-anything':
+                    raw = model.predict(frame)
+                else:
+                    with torch.inference_mode():
+                        result = model(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+                    raw = result['predicted_depth'].squeeze().detach().cpu().numpy()
+                    sync()
                 inference_seconds = time.monotonic() - start
                 render_start = time.monotonic()
                 raw = cv2.resize(raw, (width,height))
