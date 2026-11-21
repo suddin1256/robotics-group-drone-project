@@ -30,8 +30,10 @@ class LibraryTests(unittest.TestCase):
             room=store.room('Robotics classroom');other=store.room('Kitchen')
             bag=Path(directory)/'bag';bag.mkdir();(bag/'metadata.yaml').write_text('test')
             record=store.recording(room['id'],bag)
-            self.assertTrue(bag.exists());self.assertEqual(Store(directory).one('recordings',record['id'])['path'],str(bag))
-            with self.assertRaises(ValueError):store.recording(other['id'],bag)
+            self.assertTrue(bag.exists());self.assertEqual(Store(directory).one('recordings',record['id'])['path'],str(bag.resolve()))
+            alias=Path(directory)/'bag-alias';alias.symlink_to(bag.resolve(),target_is_directory=True)
+            self.assertEqual(store.recording(room['id'],alias)['id'],record['id'])
+            with self.assertRaises(ValueError):store.recording(other['id'],alias)
     def test_profile_and_command_selection(self):
         with patch('local_app.manager.platform.system',return_value='Darwin'),patch('local_app.manager.platform.machine',return_value='arm64'):
             self.assertIn(profile_settings('Nahil')['depth_model'],{'depth-anything','metric-indoor'})
