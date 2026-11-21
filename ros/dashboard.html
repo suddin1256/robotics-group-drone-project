@@ -139,6 +139,14 @@ updateDepth();
 
 <section>
 <h3>Driver telemetry and tools</h3>
+<div style="padding:12px;border:1px solid #5bbda1;border-radius:6px">
+<strong>Telemetry units checked for prototype use — November 21, 2026</strong>
+<p>14 recordings audited. Position: metres; decoded velocity ×0.1 → m/s;
+acceleration ×9.80665 → m/s²; gyro: rad/s (provisional); native height ×0.1 → metres.</p>
+<p>Unit conventions checked; position accuracy, drift and camera/world alignment remain experimental.
+Native Z was observed to decrease on ascent. Light-strength telemetry is unavailable and is not used for weighting.</p>
+<pre id="metricTelemetry">Waiting for converted motion samples.</pre>
+</div>
 <p id="driverSummary">Waiting for community driver.</p>
 <label>Camera exposure <select id="cameraExposure"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
 <button id="applyExposure" type="button">Apply exposure</button>
@@ -167,6 +175,25 @@ document.getElementById('applyExposure').onclick=async()=>{
 };
 document.getElementById('applyExposure').disabled=!!window.TELLO_PLAYBACK_ONLY;
 refreshDriver();
+async function refreshMetricTelemetry(){
+ const panel=document.getElementById('metricTelemetry');
+ try{
+  const response=await fetch('/metric-telemetry.json?t='+Date.now(),{cache:'no-store'});
+  if(!response.ok)throw Error('no sample');
+  const d=await response.json();
+  const age=Number.isFinite(d.image_stamp_ns)?Math.max(0,Date.now()/1000-d.image_stamp_ns/1e9):null;
+  const display=v=>Array.isArray(v)?v.map(x=>x.toFixed(3)).join(', '):'unavailable / stale';
+  panel.textContent=(window.TELLO_PLAYBACK_ONLY?'RECORDED samples':(age===null||age>3?'STALE samples':'Live samples'))+
+   '\nNative local position [m]: '+display(d.position_native_m)+
+   '\nNative velocity [m/s]: '+display(d.velocity_native_m_s)+
+   '\nAcceleration including gravity [m/s²]: '+display(d.acceleration_native_m_s2)+
+   '\nAngular velocity [rad/s]: '+display(d.angular_velocity_native_rad_s)+
+   '\nMotion sample age: '+(d.mvo_age_ms?.toFixed(1)??'unknown')+' ms | IMU age: '+(d.imu_age_ms?.toFixed(1)??'unknown')+' ms'+
+   '\nAxes remain native; these are not globally aligned ROS coordinates.';
+ }catch(_){panel.textContent='Waiting for converted motion samples. Unit audit remains available; no fresh motion data shown.';}
+ setTimeout(refreshMetricTelemetry,1000);
+}
+refreshMetricTelemetry();
 </script>
 <section id="pad" tabindex="0">
 <div>
@@ -337,7 +364,7 @@ async function updateTelemetry(){
   document.getElementById('telemetry').textContent=
    `${age>3?'STALE — ':''}Telemetry age: ${age.toFixed(1)} s\n`+
    `${lowBattery?'LOW BATTERY — '+s.bat+'%\n':''}`+
-   (Number.isFinite(s.h)?`Height: ${s.h} cm\n`:`Height (native value; units unverified): ${s.height??'not exposed'}\n`)+
+   (Number.isFinite(s.h)?`Height: ${s.h} cm\n`:`Height [m, native estimate]: ${Number.isFinite(s.height)?(s.height*0.1).toFixed(2):'not exposed'}\n`)+
    (Number.isFinite(s.tof)?`Downward distance: ${s.tof} cm\n`:'Downward distance: not exposed in this feed\n')+
    `All exposed state fields:\n`+
    Object.entries(s).map(([key,value])=>`${key}: ${value}`).join('\n');

@@ -76,7 +76,7 @@ def main():
     p.add_argument('--bag', metavar='BAG_FOLDER', help='Replay real recorded images/telemetry; no drone driver')
     p.add_argument('--rate', type=float, default=1.0, help='ROS bag playback speed, default 1.0')
     p.add_argument('--duration', type=float, help='Stop offline replay/demo automatically after this many seconds')
-    p.add_argument('--runtime-dir', type=Path, help='Separate runtime workspace for offline tests')
+    p.add_argument('--runtime-dir', type=Path, help='Separate workspace for a live or recorded session')
     p.add_argument('--port', type=int, default=8082, help='Local dashboard port')
     p.add_argument('--domain-id',type=int,help='Offline tests only: isolate ROS discovery from other running sessions')
     p.add_argument('--demo', action='store_true', help='Built-in synthetic camera/telemetry; no drone or recording needed')
@@ -84,6 +84,7 @@ def main():
     p.add_argument('--reuse-existing', action='store_true', help='Use original Mac environments and compiled SLAM')
     p.add_argument('--no-slam', action='store_true')
     p.add_argument('--vision', action='store_true', help='Optional V4 segmentation and relative depth')
+    p.add_argument('--map-fusion', choices=['off','adaptive'], default='off',help='Experimental aligned position blend for mapping only; default off')
     p.add_argument('--vision-mode', choices=['split','objects-only','combined'], default='split',
                    help='Independent YOLO/depth by default; combined retains original V4 behavior')
     p.add_argument('--depth-model', choices=['midas','depth-anything'], default='midas',
@@ -101,7 +102,7 @@ def main():
     if sum(map(bool, [args.replay, args.demo, args.bag])) > 1: p.error('Choose --demo, --replay or --bag, not multiple sources.')
     if not math.isfinite(args.rate) or args.rate <= 0: p.error('--rate must be positive and finite.')
     if args.duration is not None and (not offline or not math.isfinite(args.duration) or args.duration <= 0): p.error('--duration requires offline replay and a positive finite duration.')
-    if args.runtime_dir is not None and not offline: p.error('--runtime-dir is for offline testing only.')
+    # The room-library app gives each live/replay session its own durable workspace.
     if not 1 <= args.port <= 65535: p.error('Invalid dashboard port.')
     if args.slam_all_frames and (not args.bag or args.no_slam): p.error('--slam-all-frames requires --bag with SLAM enabled.')
     if args.portable and args.reuse_existing: p.error('--portable and --reuse-existing select different environments.')
@@ -149,6 +150,7 @@ def main():
     for directory in ['frame-sources', 'detections', 'observations', 'frame-telemetry', 'depth-frames', 'depth-detections']:
         shutil.rmtree(work/'live'/directory, ignore_errors=True)
     (work/'live'/'floorplan.json').unlink(missing_ok=True)
+    (work/'live'/'metric-telemetry.json').unlink(missing_ok=True)
     for name in ['map.json','telemetry.json','frame.bin','video.jpg','preview.jpg','vision.jpg','vision-status.json','playback.json',
                  'depth.jpg','depth-status.json','slam-status.json','slam-input.bin','slam-input.done',
                  'driver-data.json','image-metadata.json','comparison.json']:
@@ -163,6 +165,7 @@ def main():
     for variable in ['DYLD_LIBRARY_PATH','LD_LIBRARY_PATH']:
         env[variable]=str(community_prefix/'lib')+os.pathsep+env.get(variable,'')
     env['TELLO_PLAYBACK_ONLY'] = '1' if args.bag else '0'
+    env['TELLO_MAP_FUSION'] = args.map_fusion
     env['TELLO_WAIT_FOR_VISION'] = '1' if args.bag and args.vision else '0'
     env['TELLO_VISION_SPLIT'] = '1' if args.vision and args.vision_mode == 'split' else '0'
     env['TELLO_SLAM_ORDERED'] = '1' if args.slam_all_frames else '0'

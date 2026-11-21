@@ -129,7 +129,7 @@ class CommunityFlight(ManualLaunch, TelloRosWrapper):
               'available_tools':['manual arm/lift','land','neutral/manual takeover','slow/normal/native fast',
                                  'camera exposure (0/1/2)','ground/table launch annotation'],
               'upstream_tools_not_enabled':['flips','throw and go','palm land','automatic takeoff','altitude/attitude limits','video-mode changes'],
-              'notes':'Motion units/axes and firmware field availability unverified; no TF or SLAM fusion.',
+              'notes':'Unit conventions checked for prototype use; converted values are in the metric panel. Raw/adapted topics preserved; accuracy and axes remain unverified. No trusted TF.',
               'capture_directory':str(self.capture_folder),
               'latest':latest}
         message=String();message.data=json.dumps(info,allow_nan=False);self.capabilities.publish(message)

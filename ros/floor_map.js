@@ -24,7 +24,7 @@
  if(typeof document==='undefined')return;
  const canvas=document.getElementById('floorView');if(!canvas)return;
  const ctx=canvas.getContext('2d'),plane=document.getElementById('floorPlane'),angle=document.getElementById('floorAngle'),detail=document.getElementById('floorDetail');
- let landmarks=[],path=[],state='Waiting',stamp=0,zoom=1,pan=[0,0],drag=null,objects=[],origin=null,surfaces=[],drone=null;
+ let landmarks=[],path=[],state='Waiting',stamp=0,zoom=1,pan=[0,0],drag=null,objects=[],origin=null,surfaces=[],drone=null,mapUnits='unverified';
  function draw(){
   const ratio=window.devicePixelRatio||1;
   canvas.width=Math.max(1,Math.round(canvas.clientWidth*ratio));canvas.height=Math.max(1,Math.round(canvas.clientHeight*ratio));
@@ -65,7 +65,7 @@
   ctx.restore();ctx.fillStyle='#fff';ctx.font=`${13*ratio}px sans-serif`;
   ctx.fillText('EXPERIMENTAL · orange: native motion path · cyan: drone · dashed: tentative',12*ratio,22*ratio);
   const age=stamp?Math.max(0,Date.now()/1000-stamp):null;
-  document.getElementById('floorSummary').textContent=`${age!==null&&age>3?'STALE SLAM EXPORT — ':''}${state} | ${pts.length} transformed landmarks | ${route.length} onboard motion samples | ${surfacePoints.length} depth surface samples. ${plane.value.toUpperCase()} projection. Drag to pan; scroll to zoom. Units and floor direction are unverified.`;
+  document.getElementById('floorSummary').textContent=`${age!==null&&age>3?'STALE SLAM EXPORT — ':''}${state} | ${pts.length} transformed landmarks | ${route.length} trajectory samples | ${surfacePoints.length} depth surface samples. ${plane.value.toUpperCase()} projection. Drag to pan; scroll to zoom. Map units: ${mapUnits}; floor direction and accuracy remain unverified.`;
  }
  for(const control of [plane,angle,detail])control.addEventListener('input',()=>{zoom=1;pan=[0,0];draw();});
  document.getElementById('floorFeatures').onchange=draw;
@@ -79,9 +79,10 @@
    objects=fresh?data.objects:[];
    document.getElementById('floorEvidence').textContent=objects.length?objects.map(o=>`${o.label}: ${(o.sources||[]).join(' + ')} | ${o.observations} frame observations | ${o.support} supporting landmark IDs`).join('\n'):'No accepted object geometry yet.';
    if(fresh&&['native_mvo_unverified','slam_arbitrary'].includes(data.world_frame)){
+    mapUnits=data.reconstruction_units==='metres_experimental'?'metres (experimental alignment)':data.world_frame==='slam_arbitrary'?'arbitrary SLAM scale':'unverified';
     landmarks=data.landmarks||[];path=data.path||[];surfaces=data.surface_points||[];drone=data.drone_position;
     const i=data.inputs||{},a=data.alignment||{};
-    document.getElementById('mapFusionStatus').textContent=`${data.message}\nInputs: ${i.telemetry_frames??0} telemetry frames | ${i.YOLO_frames??0} YOLO frames | ${i.depth_frames??0} relative-depth frames | ${i.SLAM_landmarks??0} SLAM landmarks\n`+
+    document.getElementById('mapFusionStatus').textContent=`${data.message}\nPosition fusion: ${data.position_fusion_mode??'off'} (experimental; requires accepted alignment)\nInputs: ${i.telemetry_frames??0} telemetry frames | ${i.YOLO_frames??0} YOLO frames | ${i.depth_frames??0} relative-depth frames | ${i.SLAM_landmarks??0} SLAM landmarks\n`+
      `Coordinate alignment: ${a.accepted?'accepted experimentally':'waiting/rejected'} (${a.inliers??0}/${a.pairs??0} pose pairs). IMU orientation: ${a.IMU_orientation_accepted?'aligned experimentally':'visual rotation fallback'}\n`+
      `Depth frames contributing: ${data.depth_frames_used??0} | IMU-oriented frames: ${data.imu_frames_used??0} | Rejected frames: ${JSON.stringify(data.rejected_frames||{})}\n`+
      `Geometry trails newest telemetry image by ${data.geometry_lag_seconds?.toFixed(1)??'unknown'} s; native pose is ${data.pose_age_in_recording_seconds?.toFixed(2)??'unknown'} s behind that image.`;

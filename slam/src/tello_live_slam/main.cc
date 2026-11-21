@@ -157,6 +157,7 @@ int main(int argc, char** argv) {
                    << ",\"points\":[";
             bool first = true;
             std::vector<unsigned int> exported_ids;
+            std::vector<cv::Mat> exported_descriptors;
             for (auto& point : points) {
                 if (point->will_be_erased()) continue;
                 const auto p = point->get_pos_in_world();
@@ -165,12 +166,22 @@ int main(int argc, char** argv) {
                 first = false;
                 output << "[" << p(0) << "," << p(1) << "," << p(2) << "]";
                 exported_ids.push_back(point->id_);
+                exported_descriptors.push_back(point->has_representative_descriptor() ? point->get_descriptor().clone() : cv::Mat());
             }
             output << "],\"landmark_ids\":[";
             first = true;
             for (const auto id : exported_ids) {
                 if (!first) output << ",";
                 first = false; output << id;
+            }
+            output << "],\"landmark_descriptors\":[";
+            for (size_t i=0;i<exported_descriptors.size();++i) {
+                if (i) output << ",";
+                const auto& desc=exported_descriptors[i];
+                if (desc.empty() || desc.type()!=CV_8U || desc.total()!=32) { output << "null"; continue; }
+                output << "[";
+                for (int j=0;j<32;++j) { if(j) output << ","; output << static_cast<unsigned int>(desc.ptr<unsigned char>()[j]); }
+                output << "]";
             }
             output << "],\"cameras\":[";
             std::sort(cameras.begin(), cameras.end(), [](const auto& a, const auto& b) {

@@ -5,6 +5,7 @@ import json
 import cv2
 from std_msgs.msg import String
 import time
+from telemetry_units import metric_metadata
 
 import rclpy
 from rclpy.node import Node
@@ -42,6 +43,10 @@ class FrameBridge(Node):
         temporary=folder/(name+'.bridge.tmp')
         temporary.write_text(json.dumps(data));temporary.replace(folder/(name+'.json'))
         if name=='image-metadata':
+            metric=metric_metadata(data)
+            target_metric=folder/'metric-telemetry.json'
+            temp_metric=folder/'metric-telemetry.tmp'
+            temp_metric.write_text(json.dumps(metric,allow_nan=False));temp_metric.replace(target_metric)
             archive=folder/'frame-telemetry';archive.mkdir(exist_ok=True)
             target=archive/f'{round(data["image_stamp_ns"]/1000)}.json'
             temp=target.with_suffix('.tmp');temp.write_text(json.dumps(data));temp.replace(target)

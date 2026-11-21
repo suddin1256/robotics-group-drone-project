@@ -8,6 +8,8 @@ from collections import Counter
 import cv2
 import numpy as np
 from fusion_geometry import fit_similarity,fit_inverse_depth,native_sample,orientation_alignment
+from telemetry_units import UNIT_AUDIT
+from pose_fusion import blend_position
 
 K=np.array([[308.1441842,0,152.73032262],[0,310.03603888,139.18496426],[0,0,1.]])
 D=np.array([.05784031,-.40185596,.01793044,-.00400204,.82094307])
@@ -57,7 +59,7 @@ def refined_pose(observation,coordinates):
             pose=np.eye(4);pose[:3,:3]=r.T;pose[:3,3]=-r.T@tvec.flatten()
     return pose
 
-def frame_pose(observation,meta,coordinates,fit,orientation):
+def frame_pose(observation,meta,coordinates,fit,orientation,fusion_mode=None):
     if fit.get("visual_only"):
         pose=refined_pose(observation,coordinates)
         if pose is None:return None,"missing visual pose"
@@ -75,7 +77,27 @@ def frame_pose(observation,meta,coordinates,fit,orientation):
         candidate=q@orientation['offset']
         error=np.arccos(np.clip((np.trace(candidate.T@r)-1)/2,-1,1))
         if error<np.deg2rad(25):r=candidate;imu_used=True
-    return {'visual':pose,'position':sample['position'],'rotation':r,'imu_used':imu_used},None
+    result={'visual':pose,'position':sample['position'],'rotation':r,'imu_used':imu_used,'fusion_applied':False}
+    mode=fusion_mode if fusion_mode is not None else os.environ.get('TELLO_MAP_FUSION','off')
+    if mode=='adaptive':
+        features=[f for f in observation['features'] if f[0] in coordinates]
+        points=np.array([coordinates[f[0]] for f in features],float).reshape(-1,3)
+        local=(points-pose[:3,3])@pose[:3,:3]
+        front=local[:,2]>1e-5
+        if int(front.sum())>=12:
+            projected,_=cv2.projectPoints(local[front],np.zeros(3),np.zeros(3),K,D)
+            uv=np.array([f[1:3] for f in features],float)[front]
+            errors=np.linalg.norm(projected.reshape(-1,2)-uv,axis=1)
+            inliers=errors<=3
+            velocity=sample.get('velocity_m_s')
+            speed=float(np.linalg.norm(velocity)) if velocity is not None else 0.
+            fused,reason=blend_position(sample['position'],predicted,sample['age_ms'],speed,
+                int(inliers.sum()),float(np.median(errors)),fit['error'],max(3*fit['error'],.3*fit['spread']))
+            if fused is not None:
+                result.update(position=fused['position'],fusion_applied=True,fusion_quality={k:v for k,v in fused.items() if k!='position'})
+            else:result['fusion_skipped']=reason
+        else:result['fusion_skipped']='insufficient positive-depth features'
+    return result,None
 
 def inside_mask(uv,polygon):
     contour=np.asarray(polygon,np.float32)
@@ -208,6 +230,9 @@ def run():
             result={'timestamp':time.time(),'map_timestamp':data['timestamp'],'map_origin':data.get('map_origin'),
                     'state':data['state'],'world_frame':'native_mvo_unverified' if aligned else 'slam_arbitrary','unaligned_native_path':native_path,'objects':objects,
                     'path':path,'drone_position':current,'landmarks':transformed,'surface_points':surfaces,
+                    'units_audit':UNIT_AUDIT,'reconstruction_units':'metres_experimental' if aligned else 'arbitrary_slam_units',
+                    'native_from_slam':{'scale':float(fit['scale']),'rotation':fit['rotation'].tolist(),'translation':fit['translation'].tolist()} if aligned else None,
+                    'position_fusion_mode':os.environ.get('TELLO_MAP_FUSION','off'),
                     'pose_source_stamp':pose_stamp,
                     'pose_age_in_recording_seconds':max(0,latest_stamp-pose_stamp) if latest_stamp is not None and pose_stamp is not None else None,
                     'geometry_lag_seconds':max(0,latest_stamp-max(c['stamp'] for c in candidates)) if candidates and latest_stamp is not None else None,
@@ -220,7 +245,7 @@ def run():
                                  'SLAM_to_native_scale':fit['scale'] if fit else None,
                                  'IMU_orientation_accepted':orientation is not None},
                     'rejected_frames':dict(reasons),
-                    'message':'EXPERIMENTAL telemetry-led map. Native units/axes unverified; visible surfaces are not verified occupancy. '
+                    'message':'EXPERIMENTAL telemetry-led map. Telemetry unit conventions checked; native position is interpreted in metres. Axes/alignment and position accuracy remain unverified; visible surfaces are not verified occupancy. '
                               +('Aligned inputs; slow depth attached to its original frame.' if fit else 'VISUAL MAP FALLBACK: objects use SLAM geometry and matched depth in arbitrary units. Telemetry alignment rejected; native path is stored separately and is not fused.')}
             temporary=folder/'floorplan.tmp';temporary.write_text(json.dumps(result,allow_nan=False));temporary.replace(folder/'floorplan.json')
         except (FileNotFoundError,json.JSONDecodeError):pass

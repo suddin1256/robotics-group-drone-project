@@ -1,4 +1,4 @@
-# Robotics group drone project
+# TelloTubby
 
 Our robotics class project uses a Ryze Tello, ROS 2, Stella VSLAM, YOLO, and the MiDas vision systems. The dashboard shows the camera, telemetry, object detection, relative depth, and an experimental floor-plan map. We can fly manually or develop using recorded flights without connecting the drone.
 
@@ -27,6 +27,24 @@ python3 update.py
 This downloads code updates and reruns setup when dependencies change. It stops if you have uncommitted changes so it does not overwrite your work.
 
 ## Commands
+
+### Open TelloTubby
+
+```bash
+python3 app.py
+```
+
+The browser opens at http://127.0.0.1:8000. Nothing connects to the drone until you start a flight.
+
+1. Choose Shadib, Nahil, Rian, or enter your name. Shadib uses the existing Intel setup when available. Nahil and Rian use Depth Anything on Apple Silicon, with MiDaS on other hardware.
+2. Create a room or open an existing room.
+3. Use **Add existing recording** to link a flight from `Documents/tello-recordings`, then **View & process** to open the current dashboard with SLAM and vision.
+4. For a new flight, choose **New recorded flight**, follow the Tello Wi-Fi instructions, and start. Land before ending the session. Its recording will appear in that room.
+5. Open **3D room view** to see the saved reconstruction and individual map captures.
+
+Rooms, recordings, and processing history stay in `.local/room_app`. Existing recordings stay in their original folders. These files are local and are not uploaded to GitHub. Back up the room folder and any linked recordings together.
+
+Room reconstruction is experimental: matching map captures can be combined, while captures that do not match stay separate. This does not yet produce a reliable metric room model or safe flight paths. The commands below remain available for development.
 
 Run commands from the project folder. Open **[the dashboard](http://127.0.0.1:8082)** manually after starting.
 

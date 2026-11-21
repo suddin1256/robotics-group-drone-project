@@ -1,5 +1,9 @@
 """Experimental frame/scale alignment. All output units remain native and unverified."""
 import numpy as np
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'ros'))
+from telemetry_units import metric_metadata
 
 def similarity(source,target):
     x=np.asarray(source,float);y=np.asarray(target,float)
@@ -88,13 +92,14 @@ def fit_inverse_depth(signal,z):
             'error':error,'support':int(best.sum())}
 
 def native_sample(metadata):
+    metric=metric_metadata(metadata)
     log=metadata.get('log',{})
     if not log.get('valid') or not log.get('sample'):return None
     raw=log['sample'].get('data',{});mvo=raw.get('mvo',{})
     if not mvo.get('count'):return None
-    try:position=np.array([mvo['pos_'+i] for i in 'xyz'],float)
+    try:position=np.array(metric['position_native_m'],float)
     except (KeyError,ValueError,TypeError):return None
-    if not np.isfinite(position).all():return None
+    if position.shape!=(3,) or not np.isfinite(position).all():return None
     age=log.get('age_ms')
     if age is None:return None
     if raw.get('recv_time') is not None and mvo.get('recv_time') is not None:
@@ -108,4 +113,8 @@ def native_sample(metadata):
         imu_age+=max(0,raw['recv_time']-imu['recv_time'])*1000
     if not imu.get('count') or imu_age>250:rotation=None
     return {'position':position,'rotation':rotation,
-            'count':mvo['count'],'age_ms':age,'airborne':airborne}
+            'count':mvo['count'],'age_ms':age,'airborne':airborne,
+            'velocity_m_s':metric['velocity_native_m_s'],
+            'acceleration_m_s2':metric['acceleration_native_m_s2'],
+            'angular_velocity_rad_s':metric['angular_velocity_native_rad_s'],
+            'units_audit':metric['units_audit']}

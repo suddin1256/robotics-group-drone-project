@@ -1,5 +1,16 @@
 # Update log
 
+## November 21, 2026 — Checkpoint 3: TelloTubby
+
+- Named the app TelloTubby. Start it with `python3 app.py`; opening it does not connect to the drone.
+- Added Shadib, Nahil, and Rian profiles with hardware-aware settings.
+- Added rooms to keep recordings, processing sessions, and saved map captures together.
+- Added buttons to play recordings or start and end a recorded flight using the existing dashboard.
+- Added a persistent 3D room view. Matching captures can be combined; captures that fail alignment stay separate.
+- Checked telemetry unit conventions using recorded tests. Position accuracy, coordinate alignment, and map scale still need work.
+- Added an optional experimental position-fusion mode; it stays off by default.
+- Tested full recording playback, session shutdown, and saved-map persistence. Real flight through the new app still needs a hardware test.
+
 ## October 31, 2026 — current work
 
 - Changed the default Tello connection from our original DIY ROS driver to an adapted community driver based on PedroS235/tello_ros2_driver. The old driver is still available with `--driver legacy`.
