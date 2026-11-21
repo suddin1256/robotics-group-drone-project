@@ -117,6 +117,17 @@ async function updateVision(){
  setTimeout(updateVision,100);
 }
 updateVision();
+const structureCard=document.createElement('section');
+structureCard.innerHTML='<h3>Room structure — walls and door/frame candidates</h3><img id="structurePreview" class="vision-preview" style="display:none" alt="Wall and door semantic preview"><pre id="structureStatus">Structure model not started. Prepare mapping models to enable it.</pre>';
+document.getElementById('depthPreview').closest('.vision-card').appendChild(structureCard);
+async function updateStructure(){
+ try{
+  const r=await fetch('/structure-status.json?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();
+  document.getElementById('structureStatus').textContent=d.model+' | '+(d.doors||[]).map(x=>x.state).join(', ')+'\n'+d.note;
+  const image=document.getElementById('structurePreview');image.src='/structure.jpg?t='+d.source_stamp;image.style.display='block';
+ }catch(e){}setTimeout(updateStructure,2000);
+}
+updateStructure();
 let depthStamp=0;
 async function updateDepth(){
  const text=document.getElementById('depthStatus'),image=document.getElementById('depthPreview');

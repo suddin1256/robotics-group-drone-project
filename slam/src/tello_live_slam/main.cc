@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 volatile std::sig_atomic_t stopped = 0;
@@ -114,9 +115,13 @@ int main(int argc, char** argv) {
             if (tracking_state == "Tracking" && tracked_pose && tracked_pose->allFinite()) {
                 last_tracked_timestamp=timestamp;
                 const auto associations = frame_publisher->get_keypoints_and_landmarks();
+                std::vector<std::shared_ptr<stella_vslam::data::keyframe>> current_cameras;
+                slam.get_map_publisher()->get_keyframes(current_cameras);
+                double observation_origin=timestamp;
+                for (const auto& camera:current_cameras) if (!camera->will_be_erased()) observation_origin=std::min(observation_origin,camera->timestamp_);
                 const auto name = "live/observations/" + std::to_string(std::llround(timestamp*1e6)) + ".json";
                 std::ofstream observations(name + ".tmp");
-                observations << std::setprecision(16) << "{\"source_stamp\":" << timestamp << ",\"camera_to_world\":[";
+                observations << std::setprecision(16) << "{\"map_origin\":" << observation_origin << ",\"source_stamp\":" << timestamp << ",\"camera_to_world\":[";
                 for(int row=0;row<4;++row) { if(row) observations << ","; observations << "[";
                     for(int col=0;col<4;++col) { if(col) observations << ","; observations << (*tracked_pose)(row,col); }
                     observations << "]"; }
@@ -133,10 +138,14 @@ int main(int argc, char** argv) {
                 observations << "]}"; observations.close();
                 fs::rename(name + ".tmp", name);
                 observation_files.push_back(name);
-                if (observation_files.size()>2048) { fs::remove(observation_files.front()); observation_files.pop_front(); }
+                const auto archive_mapping=std::getenv("TELLO_ARCHIVE_MAPPING");
+                if ((!archive_mapping || std::strcmp(archive_mapping,"1")!=0) && observation_files.size()>2048) { fs::remove(observation_files.front()); observation_files.pop_front(); }
             }
 
-            if (now - last_export < 1) continue;
+            size_t ordered_expected=0;
+            std::ifstream ordered_end("live/slam-input.done");
+            const bool ordered_complete=ordered && bool(ordered_end >> ordered_expected) && processed_frames>=ordered_expected;
+            if (now - last_export < 1 && !ordered_complete) continue;
             last_export = now;
 
             auto publisher = slam.get_map_publisher();
@@ -224,6 +233,7 @@ int main(int argc, char** argv) {
             }
             std::cout << state << " | keyframes: " << cameras.size()
                       << " | landmarks: " << points.size() << std::endl;
+            if (ordered_complete && std::getenv("TELLO_SLAM_OFFLINE_JOB")) break;
         }
     } catch (const std::exception& error) {
         std::cerr << "Live SLAM error: " << error.what() << std::endl;

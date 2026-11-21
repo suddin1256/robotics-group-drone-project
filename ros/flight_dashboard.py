@@ -46,7 +46,7 @@ class Handler(BaseHTTPRequestHandler):
             "/vision.jpg", "/vision-status.json", "/playback.json",
             "/depth.jpg", "/depth-status.json", "/slam-status.json",
             "/floorplan.json", "/driver-data.json", "/image-metadata.json", "/comparison.json",
-            "/metric-telemetry.json"
+            "/metric-telemetry.json", "/structure.jpg", "/structure-status.json"
         }:
             try:
                 body = (live_folder / path[1:]).read_bytes()

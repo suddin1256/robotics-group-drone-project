@@ -1,4 +1,5 @@
 import importlib.util,json,tempfile,unittest
+import os
 from pathlib import Path
 try:
     import numpy as np
@@ -11,6 +12,16 @@ if np is not None:
 
 @unittest.skipIf(np is None,'Requires the vision environment (numpy and OpenCV)')
 class ReconstructionTests(unittest.TestCase):
+    def test_later_bridge_capture_links_previously_unmatched_flight(self):
+        rng=np.random.default_rng(12);points=rng.normal(size=(60,3));descs=rng.integers(0,256,(60,32),dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            entries=[('a',points[:30],descs[:30]),('b',points[30:]*3+[4,2,1],descs[30:]),('c',points*2+[1,3,2],descs)]
+            for i,(name,p,d) in enumerate(entries):
+                folder=root/'maps'/name;folder.mkdir(parents=True);file=folder/'map.json'
+                file.write_text(json.dumps({'points':p.tolist(),'landmark_descriptors':d.tolist(),'cameras':[]}));os.utime(file,(100+i,100+i))
+            roommap.rebuild(root);result=json.loads((root/'room-map.json').read_text())
+            self.assertEqual(result['aligned_maps'],3);self.assertEqual(result['separate_maps'],0)
     def test_registration_and_persistent_rebuild(self):
         rng=np.random.default_rng(42);points=rng.normal(size=(80,3));descs=rng.integers(0,256,(80,32),dtype=np.uint8)
         angle=.4;rotation=np.array([[np.cos(angle),-np.sin(angle),0],[np.sin(angle),np.cos(angle),0],[0,0,1]])

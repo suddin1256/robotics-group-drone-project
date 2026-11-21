@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse
 from .store import Store
 from .manager import Manager,ROOT,profile_settings
+from .recordings import inventory,scan
 
 WEB=Path(__file__).with_name('web')
 
@@ -31,18 +32,21 @@ class Handler(BaseHTTPRequestHandler):
                 profiles=store.rows('SELECT * FROM profiles ORDER BY created')
                 for p in profiles:p['settings']=profile_settings(p['name'])
                 rooms=store.rows('SELECT rooms.*, (SELECT count(*) FROM recordings WHERE room_id=rooms.id) AS flights,(SELECT count(*) FROM maps WHERE room_id=rooms.id) AS maps FROM rooms ORDER BY created DESC')
-                self.respond({'profiles':profiles,'rooms':rooms,'active':self.server.manager.state(),'storage':str(store.root),'token':self.server.token});return
+                background=self.server.manager.room_build_state(self.server.manager.batch_room) if self.server.manager.batch_room else None
+                self.respond({'profiles':profiles,'rooms':rooms,'active':self.server.manager.state(),'background_build':background,'mapping_setup':self.server.manager.mapping_setup_state(),'storage':str(store.root),'token':self.server.token});return
             if path=='/api/discover':
                 found=[];folder=Path.home()/'Documents/tello-recordings'
                 for p in sorted(folder.glob('*'),reverse=True):
-                    if p.is_dir() and (p/'metadata.yaml').is_file():found.append({'name':p.name,'path':str(p.resolve())})
+                    assigned=store.rows('SELECT room_id FROM recordings WHERE path=?',(str(p.resolve()),))
+                    if p.is_dir() and (p/'metadata.yaml').is_file() and not (assigned and assigned[0]['room_id']):found.append({'name':p.name,'path':str(p.resolve())})
                 self.respond(found);return
+            if path=='/api/recordings':self.respond(inventory(store));return
             parts=path.strip('/').split('/')
             if len(parts)==3 and parts[:2]==['api','rooms']:
-                room=store.one('rooms',parts[2]);room['recordings']=store.rows('SELECT * FROM recordings WHERE room_id=? ORDER BY created DESC',(room['id'],));room['sessions']=store.rows('SELECT * FROM sessions WHERE room_id=? ORDER BY created DESC',(room['id'],));room['maps']=store.rows('SELECT * FROM maps WHERE room_id=? ORDER BY updated DESC',(room['id'],));self.respond(room);return
+                room=store.one('rooms',parts[2]);room['recordings']=store.rows('SELECT * FROM recordings WHERE room_id=? ORDER BY created DESC',(room['id'],));room['sessions']=store.rows('SELECT * FROM sessions WHERE room_id=? ORDER BY created DESC',(room['id'],));room['maps']=store.rows('SELECT * FROM maps WHERE room_id=? ORDER BY updated DESC',(room['id'],));room['build']=self.server.manager.room_build_state(room['id']);self.respond(room);return
             if len(parts)==4 and parts[:2]==['api','room-map']:
                 store.one('rooms',parts[2]);name=parts[3]
-                if name not in {'room-map.json','reconstruction.log'}:raise ValueError('Unknown artifact')
+                if name not in {'room-map.json','reconstruction.log','room-mesh.json','room-mesh.ply','room-surfaces.ply','occupancy.json','reconstruction-status.json','room.ot'}:raise ValueError('Unknown artifact')
                 f=store.root/'rooms'/parts[2]/name
                 if not f.exists():self.respond({'state':'waiting','points':[],'sessions':[]});return
                 self.send_bytes(f.read_bytes(),'application/json' if name.endswith('.json') else 'text/plain');return
@@ -66,14 +70,25 @@ class Handler(BaseHTTPRequestHandler):
             if not 0<length<=12000:raise ValueError('Invalid request size')
             d=json.loads(self.rfile.read(length));path=urlparse(self.path).path;store=self.server.store;manager=self.server.manager
             if path=='/api/profiles':result=store.profile(d.get('name',''))
+            elif path=='/api/scan-recordings':result={'found':scan(store)}
+            elif path=='/api/preview-recording':
+                recording=store.one('recordings',d['recording_id'])
+                result=manager.start(recording['room_id'],d['profile_id'],'replay',recording['id'],quick=True)
+            elif path=='/api/assign-recording':result=manager.manage_recording('assign',d['recording_id'],d.get('room_id'))
+            elif path=='/api/delete-recording':
+                if d.get('permanent') is not True:raise ValueError('Permanent deletion must be explicitly confirmed.')
+                result=manager.manage_recording('delete',d['recording_id'],confirmation=d.get('confirmation'))
             elif path=='/api/rooms':result=store.room(d.get('name',''))
             elif path=='/api/import':
                 allowed={str(p.resolve()) for p in (Path.home()/'Documents/tello-recordings').glob('*') if (p/'metadata.yaml').is_file()}
                 if d.get('path') not in allowed:raise ValueError('Choose a recording from the discovered list.')
-                result=store.recording(d['room_id'],d['path'])
+                item=store.recording(None,d['path']);result=manager.manage_recording('assign',item['id'],d['room_id'])
             elif path=='/api/start':result=manager.start(d['room_id'],d['profile_id'],d['kind'],d.get('recording_id'),d.get('ready'),d.get('quick') is True)
             elif path=='/api/stop':manager.stop(d.get('landed') is True);result={'ok':True}
             elif path=='/api/land':manager.request_land();result={'requested':True}
+            elif path=='/api/prepare-mapping':result=manager.prepare_mapping()
+            elif path=='/api/build-room':result=manager.start_room_build(d['room_id'],d['profile_id'],d.get('force') is True)
+            elif path=='/api/cancel-room-build':manager.cancel_room_build(d['room_id']);result={'requested':True}
             elif path=='/api/rebuild':store.one('rooms',d['room_id']);manager.rebuild(d['room_id'],force=True);result={'requested':True}
             else:raise ValueError('Unknown action')
             self.respond(result)

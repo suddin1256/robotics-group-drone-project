@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.10)
+project(tellotubby_octomap LANGUAGES CXX)
+find_package(octomap REQUIRED)
+add_executable(octomap_export octomap_export.cc)
+target_compile_features(octomap_export PRIVATE cxx_std_11)
+target_include_directories(octomap_export PRIVATE ${OCTOMAP_INCLUDE_DIRS})
+target_link_libraries(octomap_export PRIVATE ${OCTOMAP_LIBRARIES})

@@ -25,7 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--stage', choices=['objects', 'depth'], required=True)
     parser.add_argument('--max-fps', type=float, default=15)
-    parser.add_argument('--depth-model', choices=['midas', 'depth-anything'], default='midas',
+    parser.add_argument('--depth-model', choices=['midas', 'depth-anything','metric-indoor'], default='midas',
                         help='depth stage only: MiDaS DPT-Hybrid or Depth Anything V2 Small (ONNX, CPU)')
     args = parser.parse_args()
     folder = Path(os.environ.get('TELLO_RUNTIME_DIR', str(ROOT/'runtime/live')))
@@ -68,7 +68,11 @@ def main():
                 raise RuntimeError('Nano model is not cached. While online, run vision/prepare_yolo.py with the vision Python environment.')
             model = YOLO(str(models/model_name))
         else:
-            if args.depth_model == 'depth-anything':
+            structure=None
+            if args.depth_model == 'metric-indoor':
+                from room_models import IndoorDepth,RoomStructure,DEPTH_REPO
+                model_name=DEPTH_REPO;model=IndoorDepth();structure=RoomStructure()
+            elif args.depth_model == 'depth-anything':
                 from depth_anything import DepthAnything, REPO, MODEL_FILE
                 model_name = f'{REPO}/{MODEL_FILE}'
                 model = DepthAnything()
@@ -139,7 +143,12 @@ def main():
                 for old in sorted(archive.glob('*.json'))[:-2048]:
                     old.unlink(missing_ok=True)
             else:
-                if args.depth_model == 'depth-anything':
+                metric_depth=None;semantic_labels=None;semantic_confidence=None
+                if args.depth_model == 'metric-indoor':
+                    metric_depth=model.predict(frame)
+                    # The existing floor-plan mapper expects relative INVERSE depth.
+                    raw=np.divide(1.,metric_depth,out=np.zeros_like(metric_depth),where=metric_depth>.05)
+                elif args.depth_model == 'depth-anything':
                     raw = model.predict(frame)
                 else:
                     with torch.inference_mode():
@@ -149,24 +158,39 @@ def main():
                 inference_seconds = time.monotonic() - start
                 render_start = time.monotonic()
                 raw = cv2.resize(raw, (width,height))
+                if structure is not None:
+                    from room_models import doorway_candidates,structure_preview
+                    semantic_labels,semantic_confidence=structure.predict(frame)
+                    doors=doorway_candidates(frame,semantic_labels,semantic_confidence,metric_depth)
+                    structure_image=structure_preview(frame,semantic_labels,semantic_confidence,doors)
+                    ok,image=cv2.imencode('.jpg',structure_image)
+                    if ok:
+                        temp=folder/'structure.tmp.jpg';temp.write_bytes(image.tobytes());temp.replace(folder/'structure.jpg')
+                    atomic_json(folder/'structure-status.json',{'source_stamp':source_stamp,'updated':time.time(),'doors':doors,
+                        'labels':['wall','floor','ceiling','window','door'],'state':'running','model':'SegFormer B0',
+                        'note':'Door/frame and open/closed proposals are tentative. No doorway is verified traversable.'})
+                    structure_folder=folder/'structure-frames';structure_folder.mkdir(exist_ok=True)
+                    atomic_json(structure_folder/f'{round(source_stamp*1e6)}.json',{'source_stamp':source_stamp,'doors':doors})
                 depth_folder=folder/'depth-frames';depth_folder.mkdir(exist_ok=True)
                 destination=depth_folder/f'{round(source_stamp*1e6)}.npz'
                 temporary=destination.with_suffix('.tmp')
                 with temporary.open('wb') as stream:
-                    np.savez_compressed(stream,depth=raw.astype(np.float32),source_stamp=source_stamp)
+                    payload={'depth':raw.astype(np.float32),'source_stamp':source_stamp,'rgb':frame}
+                    if metric_depth is not None:payload.update(metric_depth=metric_depth,labels=semantic_labels,confidence=semantic_confidence)
+                    np.savez_compressed(stream,**payload)
                 temporary.replace(destination)
                 with torch.inference_mode():
                     semantic=depth_segmenter.predict(frame,conf=.25,imgsz=320,device=device,verbose=False)[0]
                 semantic_folder=folder/'depth-detections';semantic_folder.mkdir(exist_ok=True)
                 atomic_json(semantic_folder/f'{round(source_stamp*1e6)}.json',
                             {'source_stamp':source_stamp,'objects':masks_json(semantic,depth_segmenter.names)})
-                for old in sorted(depth_folder.glob('*.npz'))[:-128]:
+                for old in ([] if os.environ.get('TELLO_ARCHIVE_MAPPING')=='1' else sorted(depth_folder.glob('*.npz'))[:-128]):
                     old.unlink(missing_ok=True)
                     (semantic_folder/(old.stem+'.json')).unlink(missing_ok=True)
                 normalized = cv2.normalize(raw,None,0,255,cv2.NORM_MINMAX).astype(np.uint8)
                 display = cv2.applyColorMap(normalized,cv2.COLORMAP_INFERNO)
                 count = None
-                cv2.putText(display, 'Relative depth - not meters', (5,15),
+                cv2.putText(display, 'Metric model - estimates, not measured' if metric_depth is not None else 'Relative depth - not meters', (5,15),
                             cv2.FONT_HERSHEY_SIMPLEX,.4,(255,255,255),1)
             render_seconds = time.monotonic() - render_start
             encode_start = time.monotonic()

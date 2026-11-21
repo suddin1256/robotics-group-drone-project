@@ -61,23 +61,35 @@ def rebuild(room):
     try:previous=json.loads(dest.read_text())
     except (OSError,ValueError):pass
     maps=[]
+    try:excluded=set(json.loads((room/'superseded-captures.json').read_text()))
+    except (OSError,ValueError):excluded=set()
     for path in (room/'maps').glob('*/map.json'):
+        if path.parent.name in excluded:continue
         try:
             item=read_map(path)
             if item:maps.append((path,item))
         except (OSError,ValueError):continue
     maps.sort(key=lambda x:(x[0].parent.name!=previous.get('anchor_id'),x[0].stat().st_mtime))
-    clouds=[];rows=[];target_points=[];target_desc=[];paths=[];anchor=None
-    for path,(d,p,dp,ds,surface) in maps:
-        key=path.parent.name
-        if anchor is None:anchor=key;transform={'scale':1.,'rotation':np.eye(3),'translation':np.zeros(3),'matches':0,'inliers':0,'heldout_median_error':0};reason=None
-        else:
-            transform,reason=registration(dp,np.concatenate(target_points),ds,np.concatenate(target_desc)) if target_desc else (None,'Anchor lacks matching descriptors; reprocess its flight')
-        if transform is None:rows.append({'map_id':key,'aligned':False,'reason':reason});continue
-        def apply(x):return transform['scale']*x@transform['rotation'].T+transform['translation']
-        clouds.append(apply(np.concatenate([p,surface])));target_points.append(apply(dp));target_desc.append(ds)
-        route=np.asarray(d.get('cameras',[]),float).reshape(-1,3);paths.append({'map_id':key,'points':apply(route).tolist()})
-        rows.append({'map_id':key,'aligned':True,'landmarks':len(p),'surface_samples':len(surface),'transform':{k:(v.tolist() if isinstance(v,np.ndarray) else v) for k,v in transform.items()}})
+    clouds=[];rows=[];target_points=[];target_desc=[];paths=[];anchor=None;aligned=[]
+    pending=maps
+    while pending:
+        deferred=[];made_progress=False
+        for path,(d,p,dp,ds,surface) in pending:
+            key=path.parent.name
+            if anchor is None:anchor=key;transform={'scale':1.,'rotation':np.eye(3),'translation':np.zeros(3),'matches':0,'inliers':0,'heldout_median_error':0};reason=None
+            else:
+                transform,reason=registration(dp,np.concatenate(target_points),ds,np.concatenate(target_desc)) if target_desc else (None,'Anchor lacks matching descriptors; reprocess its flight')
+            if transform is None:deferred.append((path,(d,p,dp,ds,surface),reason));continue
+            made_progress=True
+            def apply(x):return transform['scale']*x@transform['rotation'].T+transform['translation']
+            aligned.append((path.parent,d,transform))
+            clouds.append(apply(np.concatenate([p,surface])));target_points.append(apply(dp));target_desc.append(ds)
+            route=np.asarray(d.get('cameras',[]),float).reshape(-1,3);paths.append({'map_id':key,'points':apply(route).tolist()})
+            rows.append({'map_id':key,'aligned':True,'landmarks':len(p),'surface_samples':len(surface),'transform':{k:(v.tolist() if isinstance(v,np.ndarray) else v) for k,v in transform.items()}})
+        if not made_progress:
+            rows.extend({'map_id':path.parent.name,'aligned':False,'reason':reason} for path,item,reason in deferred)
+            break
+        pending=[(path,item) for path,item,reason in deferred]
     cloud=np.concatenate(clouds) if clouds else np.empty((0,3));cloud=cloud[np.isfinite(cloud).all(axis=1)]
     voxel=0.;evidence=[]
     if len(cloud):
@@ -91,6 +103,16 @@ def rebuild(room):
         evidence=[[*v[0]/v[1],len(v[2])] for v in cells.values()]
         if len(evidence)>18000:evidence=evidence[::int(np.ceil(len(evidence)/18000))]
     result={'state':'ready' if evidence else 'waiting','updated':time.time(),'anchor_id':anchor,'units':'arbitrary anchor-map units','points':evidence,'paths':paths,'sessions':rows,'voxel_size':voxel,'aligned_maps':sum(x['aligned'] for x in rows),'separate_maps':sum(not x['aligned'] for x in rows),'note':'Experimental observed surfaces. Repeated-session support is not occupancy probability. Blank space is unknown; metric scale and clearance are not verified.'}
+    # The sparse view stays usable when the optional dense dependencies are absent.
+    if aligned and voxel>0 and any((path/'source.json').exists() for path,_,_ in aligned):
+        try:
+            from dense_reconstruction import reconstruct
+            dense,semantics=reconstruct(room,aligned,max(voxel*2,1e-5))
+            result['dense']=dense;result['semantic_points']=semantics[::max(1,int(np.ceil(len(semantics)/12000)))]
+        except ImportError as error:result['dense']={'state':'unavailable','reason':str(error),'planning_ready':False}
+        except Exception as error:
+            import traceback;traceback.print_exc()
+            result['dense']={'state':'error','reason':str(error),'planning_ready':False}
     temp=dest.with_suffix('.tmp');temp.write_text(json.dumps(result,allow_nan=False));temp.replace(dest);print(f'Room rebuilt: {len(evidence)} cells, {result["aligned_maps"]} aligned / {result["separate_maps"]} separate maps',flush=True)
 
 if __name__=='__main__':

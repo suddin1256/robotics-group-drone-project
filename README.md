@@ -46,6 +46,12 @@ Rooms, recordings, and processing history stay in `.local/room_app`. Existing re
 
 Room reconstruction is experimental: matching map captures can be combined, while captures that do not match stay separate. This does not yet produce a reliable metric room model or safe flight paths. The commands below remain available for development.
 
+**New surface mapper:** Use **Prepare mapping models** in the library while online to enable indoor metric depth and wall/door segmentation. Reprocess a recording, then choose **Textured surfaces** or **Wall / floor / door labels** in its 3D room view. Door states are tentative; this does not enable autonomous flight. See [surface mapping and test results](docs/dense-room-mapping.md).
+
+**Build without playback:** In a room's **3D room view**, click **Build room from all recordings**. It processes the saved flights in the background, estimates camera poses, runs the vision models on keyframes, and links overlapping captures into a shared room map. Progress and a stop button are in the same tab. Click again after adding recordings; completed work is reused. Keep the app running while it builds.
+
+**Sort recordings:** Open **All recordings** in the sidebar. Search or filter to **Unassigned only**, then use **Preview** to watch a flight without running the mapping models. Choose or create its room above the video and save the assignment while watching. **Manage → Unlink from room** keeps the files and saved processing results. **Delete recording permanently** removes the original folder and its processing results after you type its name; stop its playback first. **Scan for recordings** finds new bags in `Documents/tello-recordings`, including incomplete captures.
+
 Run commands from the project folder. Open **[the dashboard](http://127.0.0.1:8082)** manually after starting.
 
 Update from Nahil (11-03-2026):

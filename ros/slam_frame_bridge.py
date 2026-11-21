@@ -50,7 +50,8 @@ class FrameBridge(Node):
             archive=folder/'frame-telemetry';archive.mkdir(exist_ok=True)
             target=archive/f'{round(data["image_stamp_ns"]/1000)}.json'
             temp=target.with_suffix('.tmp');temp.write_text(json.dumps(data));temp.replace(target)
-            for old in sorted(archive.glob('*.json'))[:-4096]:old.unlink(missing_ok=True)
+            if os.environ.get('TELLO_ARCHIVE_MAPPING')!='1':
+                for old in sorted(archive.glob('*.json'))[:-4096]:old.unlink(missing_ok=True)
 
     def receive_preview(self, message):
         age = time.time() - (message.header.stamp.sec + message.header.stamp.nanosec * 1e-9)

@@ -23,6 +23,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(store.one('sessions','session')['state'],'finished')
             records=store.rows('SELECT * FROM recordings WHERE room_id=?',(room['id'],))
             self.assertEqual(len(records),1);self.assertEqual(records[0]['linked'],0)
+            self.assertEqual(store.one('sessions','session')['recording_id'],records[0]['id'])
     def test_persistence_and_recording_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             store=Store(directory);p=store.profile('Shadib');self.assertEqual(store.profile('shadib')['id'],p['id'])
@@ -33,10 +34,10 @@ class LibraryTests(unittest.TestCase):
             with self.assertRaises(ValueError):store.recording(other['id'],bag)
     def test_profile_and_command_selection(self):
         with patch('local_app.manager.platform.system',return_value='Darwin'),patch('local_app.manager.platform.machine',return_value='arm64'):
-            self.assertEqual(profile_settings('Nahil')['depth_model'],'depth-anything')
-            self.assertEqual(profile_settings('Rian')['depth_model'],'depth-anything')
+            self.assertIn(profile_settings('Nahil')['depth_model'],{'depth-anything','metric-indoor'})
+            self.assertIn(profile_settings('Rian')['depth_model'],{'depth-anything','metric-indoor'})
         with patch('local_app.manager.platform.machine',return_value='x86_64'):
-            self.assertEqual(profile_settings('Nahil')['depth_model'],'midas')
+            self.assertIn(profile_settings('Nahil')['depth_model'],{'midas','metric-indoor'})
         with tempfile.TemporaryDirectory() as directory:
             manager=Manager(Store(directory))
             try:

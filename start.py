@@ -87,7 +87,7 @@ def main():
     p.add_argument('--map-fusion', choices=['off','adaptive'], default='off',help='Experimental aligned position blend for mapping only; default off')
     p.add_argument('--vision-mode', choices=['split','objects-only','combined'], default='split',
                    help='Independent YOLO/depth by default; combined retains original V4 behavior')
-    p.add_argument('--depth-model', choices=['midas','depth-anything'], default='midas',
+    p.add_argument('--depth-model', choices=['midas','depth-anything','metric-indoor'], default='midas',
                    help='Split-mode depth: MiDaS, or faster Depth Anything V2 Small via ONNX (not on Intel Mac)')
     p.add_argument('--slam-all-frames', action='store_true', help='Bag only: feed every recorded frame to SLAM in order, even if it falls behind')
     p.add_argument('--dry-run', action='store_true', help='Print startup plan; start nothing')

@@ -2,6 +2,11 @@
 
 ## November 21, 2026 — Checkpoint 3: TelloTubby
 
+- Added the eight-second prototype welcome; click anywhere to dismiss it.
+- Added indoor depth and wall/door segmentation, surface meshes, and experimental OctoMap export. Door states and distances still need validation.
+- Added **Build room from all recordings** so mapping can run in the background without watching playback. Completed recordings are reused on later builds.
+- Added a recording library with search, unassigned previews, room assignment while watching, unlinking, and confirmed permanent deletion.
+- Added an offline path-preview tool. It does not control the drone; autonomous navigation is not enabled.
 - Named the app TelloTubby. Start it with `python3 app.py`; opening it does not connect to the drone.
 - Added Shadib, Nahil, and Rian profiles with hardware-aware settings.
 - Added rooms to keep recordings, processing sessions, and saved map captures together.

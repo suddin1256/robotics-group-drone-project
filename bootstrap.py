@@ -102,6 +102,8 @@ def main():
         env.pop('HF_HUB_OFFLINE', None)
         env.pop('TRANSFORMERS_OFFLINE', None)
         run([python, ROOT / 'vision/worker.py', '--prepare'], env=env)
+        run([python, ROOT / 'vision/prepare_mapping.py'], env=env)
+        if 'slam' in features:run([python, ROOT / 'scripts/build_octomap.py'],env=env)
     STATE.parent.mkdir(exist_ok=True)
     temporary = STATE.with_suffix('.tmp')
     temporary.write_text(json.dumps({'platform': host, 'features': sorted(features),

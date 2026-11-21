@@ -39,16 +39,22 @@ class Store:
         with self.connect() as db:db.execute('INSERT INTO rooms VALUES(?,?,?)',(key,name,time.time()))
         return self.one('rooms',key)
     def recording(self,room_id,path,linked=True):
-        self.one('rooms',room_id);path=Path(path).resolve()
+        if room_id is not None:self.one('rooms',room_id)
+        path=Path(path).resolve()
         existing=self.rows('SELECT * FROM recordings WHERE path=?',(str(path),))
         if existing:
+            if room_id is None:return existing[0]
+            if existing[0]['room_id'] is None:return self.assign_recording(existing[0]['id'],room_id)
             if existing[0]['room_id']!=room_id:raise ValueError('This recording already belongs to another room.')
             return existing[0]
         key=uid()
         with self.connect() as db:db.execute('INSERT INTO recordings VALUES(?,?,?,?,?,?)',(key,room_id,path.name,str(path),time.time(),int(linked)))
-        refs=self.root/'rooms'/room_id/'recordings';refs.mkdir(exist_ok=True)
+        refs=(self.root/'rooms'/room_id if room_id else self.root/'unassigned')/'recordings';refs.mkdir(parents=True,exist_ok=True)
         (refs/(key+'.json')).write_text(json.dumps({'recording':str(path),'linked':linked},indent=2))
         return self.one('recordings',key)
+    def assign_recording(self,key,room_id):
+        from .recordings import assign
+        return assign(self,key,room_id)
     def update_session(self,key,**values):
         if not set(values)<={'state','ended','error'}:raise ValueError('Invalid session update')
         with self.connect() as db:db.execute('UPDATE sessions SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),key))
