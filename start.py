@@ -166,7 +166,8 @@ def main():
         env[variable]=str(community_prefix/'lib')+os.pathsep+env.get(variable,'')
     env['TELLO_PLAYBACK_ONLY'] = '1' if args.bag else '0'
     env['TELLO_MAP_FUSION'] = args.map_fusion
-    env['TELLO_WAIT_FOR_VISION'] = '1' if args.bag and args.vision else '0'
+    # Camera playback must not wait for optional model downloads/warm-up.
+    env['TELLO_WAIT_FOR_VISION'] = '0'
     env['TELLO_VISION_SPLIT'] = '1' if args.vision and args.vision_mode == 'split' else '0'
     env['TELLO_SLAM_ORDERED'] = '1' if args.slam_all_frames else '0'
     env['TELLO_DASHBOARD_PORT'] = str(args.port)
@@ -206,7 +207,10 @@ def main():
                     failed_optional.add(name)
                     continue
                 if child.poll() is not None:
-                    raise RuntimeError(f'{name} exited ({child.returncode}); inspect its log.')
+                    log_path=ROOT/'logs'/f'{stamp}_{name}.log'
+                    try:detail=log_path.read_text(errors='replace')[-4500:]
+                    except OSError:detail='Log unavailable.'
+                    raise RuntimeError(f'{name} exited ({child.returncode}). Log: {log_path}\n{detail}')
             time.sleep(0.2)
     except RuntimeError as error:
         print(error,file=sys.stderr)

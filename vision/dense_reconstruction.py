@@ -64,7 +64,7 @@ def reconstruct(room,aligned,voxel,max_frames=160):
     import open3d as o3d
     volume=o3d.pipelines.integration.ScalableTSDFVolume(voxel_length=voxel,sdf_trunc=voxel*4,
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
-    stats=Counter();accepted=[];rays=[];door_evidence=[];semantic_points=[]
+    stats=Counter();accepted=[];rays=[];door_evidence=[];semantic_points=[];objects=[]
     for capture,data,transform in aligned:
         try:source=json.loads((capture/'source.json').read_text());live=Path(source['live']);k,d,w,h=camera_parameters(live.parent/'assets/tello_320_dense.yaml')
         except (OSError,ValueError,KeyError):stats['missing session source']+=1;continue
@@ -101,6 +101,7 @@ def reconstruct(room,aligned,voxel,max_frames=160):
                 depth=fitted['depth'];pose,depth=transformed_frame(fitted['pose'],depth,transform)
                 # A person mask is dynamic evidence, never part of a permanent wall.
                 if labels is not None:depth[labels==12]=0
+                detection={'objects':[]}
                 try:
                     detection=json.loads((live/'depth-detections'/(packet.stem+'.json')).read_text())
                     for obj in detection['objects']:
@@ -118,6 +119,24 @@ def reconstruct(room,aligned,voxel,max_frames=160):
                 cp=np.column_stack([(xx-k[0,2])/k[0,0],(yy-k[1,2])/k[1,1],np.ones(len(xx))])*zs[:,None]
                 endpoints=cp[good]@pose[:3,:3].T+pose[:3,3]
                 rays.append((pose[:3,3],endpoints))
+                # Locate static detections using only their accepted depth pixels.
+                for obj in detection.get('objects',[]):
+                    if obj.get('label')=='person':continue
+                    mask=np.zeros((h,w),np.uint8)
+                    polygon=np.asarray(obj.get('polygon',[]),np.float32)
+                    if polygon.ndim!=2 or polygon.shape[0]<3 or polygon.shape[1]!=2:continue
+                    cv2.fillPoly(mask,[np.rint(polygon).astype(np.int32)],1)
+                    mask=cv2.remap(mask,map_x,map_y,cv2.INTER_NEAREST)
+                    samples=endpoints[mask[yy[good],xx[good]]>0]
+                    if len(samples)<12:continue
+                    lo,hi=np.quantile(samples,[.1,.9],axis=0)
+                    center=(lo+hi)/2
+                    existing=next((item for item in objects if item['label']==obj['label'] and np.linalg.norm(center-np.asarray(item['center']))<max(voxel*4,np.linalg.norm(hi-lo)*.5)),None)
+                    item={'label':obj['label'],'center':center.tolist(),'min':lo.tolist(),'max':hi.tolist(),'support':1,'source_stamp':stamp}
+                    if existing:
+                        item['support']=existing['support']+1
+                        existing.update(item)
+                    else:objects.append(item)
                 if labels is not None:
                     rect_labels=cv2.remap(labels,map_x,map_y,cv2.INTER_NEAREST)
                     for point,label in zip(endpoints,rect_labels[yy[good],xx[good]]):
@@ -175,7 +194,13 @@ def reconstruct(room,aligned,voxel,max_frames=160):
         for i,point in enumerate(vertices):
             count,indices,distances=search.search_knn_vector_3d(point,1)
             if count and distances[0]<(voxel*4)**2:structure_colors[i]=palette.get(int(samples[indices[0],3]),[.4,.48,.52])
-    result={'vertices':vertices.tolist(),'triangles':triangles.tolist(),'colors':np.clip(colors,0,1).tolist(),'structure_colors':structure_colors.tolist(),'summary':summary}
+    summary['placed_objects']=len(objects)
+    summary['floor_samples']=sum(point[3]==3 for point in semantic_points)
+    # Export fused RGB surface samples separately from sparse SLAM landmarks.
+    surface=cloud.voxel_down_sample(max(voxel*.5,1e-6))
+    surface_points=np.asarray(surface.points);surface_colors=np.asarray(surface.colors)
+    step=max(1,int(math.ceil(len(surface_points)/100000)))
+    result={'vertices':vertices.tolist(),'triangles':triangles.tolist(),'colors':np.clip(colors,0,1).tolist(),'structure_colors':structure_colors.tolist(),'objects':objects,'floor_points':[point[:3] for point in semantic_points if point[3]==3],'surface_points':surface_points[::step].tolist(),'surface_colors':np.clip(surface_colors[::step],0,1).tolist(),'surface_radius':voxel*.7,'summary':summary}
     atomic(room/'room-mesh.json',result)
     atomic(room/'occupancy.json',{'resolution':voxel,'units':summary['units'],'planning_ready':False,'cells':cells,'unknown_is_blocked':True})
     atomic(room/'reconstruction-status.json',summary)

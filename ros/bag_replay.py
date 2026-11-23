@@ -96,7 +96,8 @@ class BagReplay(Node):
             if self.ordered is not None:
                 frame = self.converter.imgmsg_to_cv2(message, desired_encoding='bgr8')
                 if frame.shape != (240,320,3):
-                    raise RuntimeError('Ordered SLAM expects the calibrated 320x240 camera stream.')
+                    import cv2
+                    frame=cv2.resize(frame,(320,240),interpolation=cv2.INTER_AREA)
                 packet = struct.pack('<dII', self.recorded_image_stamp/1e9, 320,240)+frame.tobytes()
                 if self.ordered.tell()+len(packet) > 2*1024**3:
                     raise RuntimeError('Ordered SLAM spool exceeded 2 GiB. Use a shorter recording; original bag is unchanged.')

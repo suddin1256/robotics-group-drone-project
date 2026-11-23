@@ -87,11 +87,11 @@ function flightsPage(){
  }
 }
 async function mapPage(){
- $('roomBody').innerHTML=`<div class="map-tools"><select id="mapChoice" aria-label="Map capture"><option value="room">Combined room reconstruction</option>${room.maps.map((m,i)=>`<option value="${m.id}">Capture ${room.maps.length-i} · ${m.landmarks} landmarks · ${esc(m.state)}</option>`).join('')}</select>${button('Fit view','fit-map')}${button('Update room map','rebuild')}<span class="pill">Drag to orbit · scroll to zoom</span></div><canvas id="roomCanvas" class="map-view" aria-label="Interactive 3D room reconstruction"></canvas><p id="mapStatus" class="meta-line">Loading saved reconstruction…</p><div class="callout">Experimental observed surfaces. Unknown space is not clear space. Separate flights are combined only when matching landmarks pass geometric checks; otherwise they stay available as individual captures. Path planning comes later.</div><div id="mapSources"></div>`;
+ $('roomBody').innerHTML=`<div class="map-tools"><select id="mapChoice" aria-label="Map capture"><option value="room">Combined room reconstruction</option>${room.maps.map((m,i)=>`<option value="${m.id}">Capture ${room.maps.length-i} · ${m.landmarks} landmarks · ${esc(m.state)}</option>`).join('')}</select>${button('Fit view','fit-map')}${button('Update room map','rebuild')}<select id="viewMode" aria-label="Camera view"><option value="inside">Inside room</option><option value="orbit">Outside overview</option></select><span class="pill">Drag to look · scroll to move</span></div><canvas id="roomCanvas" class="map-view" aria-label="Interactive 3D room reconstruction"></canvas><p id="mapStatus" class="meta-line">Loading saved reconstruction…</p><div class="callout">Experimental observed surfaces. Unknown space is not clear space. Separate flights are combined only when matching landmarks pass geometric checks; otherwise they stay available as individual captures. Path planning comes later.</div><div id="mapSources"></div>`;
  $('roomBody').insertAdjacentHTML('afterbegin',`<div class="card" id="buildPanel"><h3>Build this room from its recordings</h3><p>Process every saved flight in the background. No video viewing or drone connection needed. All images go through SLAM; tracked keyframes get depth, YOLO and room-structure processing.</p><div class="actions">${button('Build room from all recordings','build-room','primary')}${button('Stop room build','cancel-build')}</div><label class="check"><input type="checkbox" id="forceRoomBuild"> Reprocess recordings even if they already have saved results</label><p id="buildProgress" role="status"></p><details><summary>Background build log</summary><pre id="buildLog"></pre></details></div>`);
  updateBuildPanel(room.build);
- $('mapChoice').insertAdjacentHTML('afterend','<select id="roomLayer" aria-label="Reconstruction layer"><option value="surface">Textured surfaces</option><option value="structure">Wall / floor / door labels</option><option value="points">SLAM point evidence</option></select>');
- viewer=new CloudViewer($('roomCanvas'));$('mapChoice').onchange=()=>loadMap();$('roomLayer').onchange=()=>loadMap();await loadMap();
+ $('mapChoice').insertAdjacentHTML('afterend','<select id="roomLayer" aria-label="Reconstruction layer"><option value="dense">Dense colored room</option><option value="surface">Textured surfaces</option><option value="structure">Wall / floor / door labels</option><option value="points">SLAM point evidence</option></select>');
+ viewer=new CloudViewer($('roomCanvas'));$('viewMode').onchange=()=>{viewer.mode=$('viewMode').value;viewer.fit();};$('mapChoice').onchange=()=>loadMap();$('roomLayer').onchange=()=>loadMap();await loadMap();
 }
 function updateBuildPanel(job){
  if(!$('buildPanel'))return;
@@ -104,21 +104,27 @@ function updateBuildPanel(job){
 }
 async function loadMap(){
  if(!$('mapChoice'))return;
- const choice=$('mapChoice').value;
+ const choice=$('mapChoice').value,target=viewer,layer=$('roomLayer')?.value,roomId=room.id;
+ const request=(target.request||0)+1;target.request=request;
+ const current=()=>viewer===target&&target.request===request&&$('mapChoice')?.value===choice&&$('roomLayer')?.value===layer;
  try{
-  const d=await api(choice==='room'?`room-map/${room.id}/room-map.json`:`map/${choice}/map.json`);
-  if(!$('mapStatus'))return;
-  const points=d.points||[];viewer.set(points,d.paths||(d.cameras?[{points:d.cameras}]:[]));
-  if(choice==='room'&&d.dense&&$('roomLayer')?.value!=='points'){
-   const mesh=await api(`room-map/${room.id}/room-mesh.json`);
-   if(mesh.vertices?.length&&$('mapChoice')?.value===choice)viewer.setMesh({...mesh,colors:$('roomLayer')?.value==='structure'?mesh.structure_colors:mesh.colors});
+  const d=await api(choice==='room'?`room-map/${roomId}/room-map.json`:`map/${choice}/map.json`);
+  if(!current())return;
+  const points=d.points||[],paths=d.paths||(d.cameras?[{points:d.cameras}]:[]);
+  let mesh=null;
+  if(choice==='room'&&d.dense&&layer!=='points'){
+   mesh=await api(`room-map/${roomId}/room-mesh.json`);
   }
+  if(!current())return;
+  // Swap complete geometry once, keeping the old map visible during requests.
+  if(mesh?.vertices?.length){target.paths=paths;target.setMesh({...mesh,style:layer,colors:layer==='structure'?mesh.structure_colors:mesh.colors});}
+  else target.set(points,paths);
   $('mapStatus').textContent=points.length?`${points.length.toLocaleString()} displayed points/cells · ${choice==='room'?d.units:'arbitrary SLAM units'} · ${d.aligned_maps??1} aligned captures · ${d.separate_maps??0} separate. Green points have support from more than one aligned capture.`:'No reconstruction saved yet. Process a recording with all systems to create a map. A low-texture flight may not initialize SLAM.';
   $('mapSources').innerHTML=(d.sessions||[]).length?`<div class="card"><h3>Capture alignment</h3>${d.sessions.map((s,i)=>`<p><span class="${s.aligned?'status-ok':'status-warn'}">${s.aligned?'Aligned':'Kept separate'}</span> · Capture ${i+1}${s.reason?' — '+esc(s.reason):' · '+(s.landmarks||0)+' landmarks'}</p>`).join('')}</div>`:'';
   if(d.dense)$('mapSources').insertAdjacentHTML('afterbegin',`<div class="card"><h3>Reconstructed surfaces</h3><p>${d.dense.integrated_frames||0} matched depth frames · ${d.dense.triangles||0} mesh triangles. ${esc(d.dense.reason||'Metric scale and door clearance are not verified. Path planning / autonomous flight remain blocked.')}</p><p>${esc(JSON.stringify(d.dense.rejected||{}))}</p><a href="/api/room-map/${room.id}/room-mesh.ply" download>Download surface mesh</a> · <a href="/api/room-map/${room.id}/occupancy.json" download>Download tentative occupancy</a></div>`);
-  if(viewer.mesh)$('mapStatus').textContent=`${viewer.mesh.vertices.length.toLocaleString()} surface vertices · ${viewer.mesh.triangles.length.toLocaleString()} triangles · arbitrary map units. `+($('roomLayer').value==='structure'?'Blue: wall · green: floor · pink: ceiling · orange: door candidates.':'Textured surface reconstruction.');
+  if(viewer.mesh)$('mapStatus').textContent=`${viewer.mesh.vertices.length.toLocaleString()} surface vertices · ${viewer.mesh.triangles.length.toLocaleString()} triangles · arbitrary map units. `+($('roomLayer').value==='structure'?'Blue: wall · green: floor · pink: ceiling · orange: door candidates.':`Textured surfaces · ${viewer.mesh.objects?.length||0} depth-positioned objects · ${viewer.mesh.floor_points?.length||0} observed floor samples. Rebuild older captures to add these layers.`);
   if(d.dense?.octomap?.startsWith('exported'))$('mapSources').insertAdjacentHTML('beforeend',`<p><a href="/api/room-map/${room.id}/room.ot" download>Download experimental OctoMap</a> · clearance and metric scale unverified</p>`);
- }catch(e){if($('mapStatus'))$('mapStatus').textContent=e.message;}
+ }catch(e){if(current()&&$('mapStatus'))$('mapStatus').textContent=e.message;}
 }
 function sessionPage(id){
  const a=state.active?.id===id?state.active:null;
@@ -136,6 +142,8 @@ function updateSession(a){
  $('sessionStatus').textContent=a.state==='stopping'?'Finishing recording and saving maps. Keep this window open.':`${a.state} · ${a.room_id?'Output stays with this room.':'Unassigned preview; recording stays in the library.'}`;
  if($('previewAssignment'))$('previewAssignment').textContent=a.room_id?'Currently linked to '+(state.rooms.find(r=>r.id===a.room_id)?.name||'its room')+'. You can change it while watching.':'Not linked to a room yet. Choose a room or create one while watching.';
  $('sessionLog').textContent=a.log_tail||'Waiting for startup output…';
+ if(a.playback)$('sessionStatus').textContent=`Recording: ${a.playback.state} · ${(a.playback.position_seconds||0).toFixed(1)}s · ${a.playback.image_count||0} images`;
+ if(!a.dashboard_ready&&$('frameLoading'))$('frameLoading').querySelector('p').textContent='Starting the dashboard. Startup details are shown in the log below; model loading does not block camera playback.';
  if(a.dashboard_ready&&$('flightFrame').getAttribute('src')!==a.dashboard_url){$('flightFrame').src=a.dashboard_url;$('flightFrame').hidden=false;$('frameLoading').hidden=true;}
 }
 async function render(force=false){
@@ -145,7 +153,7 @@ async function render(force=false){
   recordingItems=await api('recordings');key+=':'+recordingItems.map(x=>x.id+x.room_id+x.missing+x.incomplete).join(',')+':'+busy();
   if(force||key!==lastKey){lastKey=key;recordingsPage();}
  }else if(r[0]==='room'&&r[1]){
-  room=await api('rooms/'+r[1]);key+=':'+room.recordings.length+':'+room.sessions.map(s=>s.state).join(',')+':'+room.maps.length+':'+room.build?.state;
+  room=await api('rooms/'+r[1]);if(r[2]!=='map')key+=':'+room.recordings.length+':'+room.sessions.map(s=>s.state).join(',')+':'+room.maps.length+':'+room.build?.state;
   if(force||key!==lastKey){lastKey=key;roomPage(r[2]||'flights');}else updateBuildPanel(room.build);
  }else if(r[0]==='session'&&r[1]){
   const a=state.active?.id===r[1]?state.active:null;if(a)room=a.room_id?await api('rooms/'+a.room_id):null;
@@ -214,25 +222,46 @@ $('cancelRoom').onclick=()=>$('roomDialog').close();$('cancelConnect').onclick=(
 window.addEventListener('hashchange',()=>{lastKey='';render().catch(e=>toast(e.message));});
 
 class CloudViewer{
- constructor(canvas){this.canvas=canvas;this.yaw=.65;this.pitch=.45;this.zoom=1;this.center=[0,0,0];this.radius=1;this.points=[];this.paths=[];let drag=null;
-  canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId);};canvas.onpointermove=e=>{if(!drag)return;this.yaw+=(e.clientX-drag[0])*.008;this.pitch=Math.max(-1.5,Math.min(1.5,this.pitch+(e.clientY-drag[1])*.008));drag=[e.clientX,e.clientY];this.draw();};canvas.onpointerup=()=>drag=null;canvas.onpointercancel=()=>drag=null;canvas.onwheel=e=>{e.preventDefault();this.zoom=Math.max(.1,Math.min(20,this.zoom*Math.exp(-e.deltaY*.001)));this.draw();};this.resize=new ResizeObserver(()=>this.draw());this.resize.observe(canvas);
+ constructor(canvas){this.canvas=canvas;this.mode='inside';this.yaw=.65;this.pitch=0;this.zoom=1;this.center=[0,0,0];this.radius=1;this.points=[];this.paths=[];let drag=null;
+  canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId);};canvas.onpointermove=e=>{if(!drag)return;this.yaw+=(e.clientX-drag[0])*.008;this.pitch=Math.max(-1.5,Math.min(1.5,this.pitch+(e.clientY-drag[1])*.008));drag=[e.clientX,e.clientY];this.draw();};canvas.onpointerup=()=>drag=null;canvas.onpointercancel=()=>drag=null;canvas.onwheel=e=>{e.preventDefault();if(this.mode==='inside'){const step=e.deltaY*this.radius*.001;this.center[0]+=Math.sin(this.yaw)*step;this.center[1]-=Math.cos(this.yaw)*step;this.draw();return;}this.zoom=Math.max(.1,Math.min(20,this.zoom*Math.exp(-e.deltaY*.001)));this.draw();};this.resize=new ResizeObserver(()=>this.draw());this.resize.observe(canvas);
  }
- set(points,paths){this.mesh=null;const first=!this.points.length;this.points=points.filter(p=>p.length>=3&&p.slice(0,3).every(Number.isFinite));this.paths=paths;if(first)this.fit();else this.draw();}
- setMesh(mesh){this.mesh=mesh;this.points=mesh.vertices;this.draw();}
- fit(){if(this.points.length){const axes=[0,1,2].map(i=>this.points.map(p=>p[i]).sort((a,b)=>a-b));const lo=axes.map(a=>a[Math.floor(a.length*.01)]),hi=axes.map(a=>a[Math.min(a.length-1,Math.floor(a.length*.99))]);this.center=lo.map((v,i)=>(v+hi[i])/2);this.radius=Math.max(...hi.map((v,i)=>v-lo[i]),.001)/2;}this.zoom=1;this.draw();}
+ set(points,paths){this.mesh=null;this.points=points.filter(p=>p.length>=3&&p.slice(0,3).every(Number.isFinite));this.paths=paths;if(!this.initialized&&this.points.length){this.initialized=true;this.fit();}else this.draw();}
+ setMesh(mesh){this.mesh=mesh;this.points=mesh.vertices;if(!this.initialized&&this.points.length){this.initialized=true;this.fit();}else this.draw();}
+ fit(){if(this.points.length){const axes=[0,1,2].map(i=>this.points.map(p=>p[i]).sort((a,b)=>a-b));const lo=axes.map(a=>a[Math.floor(a.length*.01)]),hi=axes.map(a=>a[Math.min(a.length-1,Math.floor(a.length*.99))]);this.center=lo.map((v,i)=>(v+hi[i])/2);this.radius=Math.max(...hi.map((v,i)=>v-lo[i]),.001)/2;}if(this.mode==='inside'){const route=this.paths.find(p=>p.points?.length);if(route)this.center=route.points[Math.floor(route.points.length/2)].slice(0,3);this.pitch=0;}this.zoom=1;this.draw();}
  project(point){const [x,y,z]=point.map((v,i)=>v-this.center[i]),c=Math.cos(this.yaw),s=Math.sin(this.yaw),a=c*x-s*y,b=s*x+c*y;return [a,Math.cos(this.pitch)*z-Math.sin(this.pitch)*b,Math.sin(this.pitch)*z+Math.cos(this.pitch)*b];}
- draw(){const c=this.canvas;if(!c.isConnected){this.resize.disconnect();return;}const ratio=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*ratio;c.height=h*ratio;const ctx=c.getContext('2d');ctx.scale(ratio,ratio);ctx.fillStyle='#101922';ctx.fillRect(0,0,w,h);const scale=Math.min(w,h)*.36/this.radius*this.zoom;const screen=p=>{const q=this.project(p);return [w/2+q[0]*scale,h/2-q[1]*scale,q[2]];};
-  ctx.strokeStyle='#20313e';ctx.lineWidth=1;for(let i=-4;i<=4;i++){ctx.beginPath();ctx.moveTo(w/2+i*50,0);ctx.lineTo(w/2+i*50,h);ctx.stroke();ctx.beginPath();ctx.moveTo(0,h/2+i*50);ctx.lineTo(w,h/2+i*50);ctx.stroke();}
-  if(this.mesh){
+ draw(){const c=this.canvas;if(!c.isConnected){this.resize.disconnect();return;}const ratio=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*ratio;c.height=h*ratio;const ctx=c.getContext('2d');ctx.scale(ratio,ratio);ctx.fillStyle=this.mesh?.style==='dense'?'#f1f3f1':'#101922';ctx.fillRect(0,0,w,h);const scale=Math.min(w,h)*.36/this.radius*this.zoom;const screen=p=>{const q=this.project(p);if(this.mode==='inside'){if(q[2]<=this.radius*.005)return null;const f=Math.min(w,h)*.8;return [w/2+q[0]*f/q[2],h/2-q[1]*f/q[2],q[2]];}return [w/2+q[0]*scale,h/2-q[1]*scale,q[2]];};
+  ctx.strokeStyle='#20313e';ctx.lineWidth=1;for(let i=-4;this.mesh?.style!=='dense'&&i<=4;i++){ctx.beginPath();ctx.moveTo(w/2+i*50,0);ctx.lineTo(w/2+i*50,h);ctx.stroke();ctx.beginPath();ctx.moveTo(0,h/2+i*50);ctx.lineTo(w,h/2+i*50);ctx.stroke();}
+  if(this.mesh&&this.mesh.style!=='dense'){
    const vertices=this.mesh.vertices.map(screen),colors=this.mesh.colors||[],triangles=this.mesh.triangles||[];
    const stride=Math.max(1,Math.ceil(triangles.length/12000));const faces=[];
-   for(let i=0;i<triangles.length;i+=stride){const ids=triangles[i];faces.push({ids,z:ids.reduce((sum,id)=>sum+vertices[id][2],0)/3});}
-   faces.sort((a,b)=>a.z-b.z);ctx.globalAlpha=.92;
+   for(let i=0;i<triangles.length;i+=stride){const ids=triangles[i];if(ids.some(id=>!vertices[id]))continue;faces.push({ids,z:ids.reduce((sum,id)=>sum+vertices[id][2],0)/3});}
+   faces.sort((a,b)=>this.mode==='inside'?b.z-a.z:a.z-b.z);ctx.globalAlpha=.92;
    for(const face of faces){const ids=face.ids,c=colors[ids[0]]||[.5,.65,.7];ctx.fillStyle=`rgb(${c.map(v=>Math.round(v*255)).join(',')})`;ctx.beginPath();ids.forEach((id,i)=>{const p=vertices[id];i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);});ctx.closePath();ctx.fill();}
    ctx.globalAlpha=1;
   }
-  const pts=this.points.map(p=>[...screen(p),p[3]||1]).sort((a,b)=>a[2]-b[2]);for(const p of (this.mesh?[]:pts)){if(p[0]<0||p[0]>w||p[1]<0||p[1]>h)continue;ctx.fillStyle=p[3]>1?'#b8e8c6':'#86a6bd';ctx.globalAlpha=p[3]>1?.9:.6;ctx.fillRect(p[0],p[1],p[3]>1?2.8:2,p[3]>1?2.8:2);}ctx.globalAlpha=1;
-  this.paths.forEach((route,i)=>{ctx.strokeStyle=['#edba7d','#e99d9d','#90b7ee'][i%3];ctx.lineWidth=1.5;ctx.beginPath();(route.points||[]).forEach((p,j)=>{const q=screen(p);j?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.stroke();});ctx.fillStyle='#819baa';ctx.font='12px system-ui';ctx.fillText(this.points.length?'OBSERVED GEOMETRY · experimental alignment':'No saved geometry yet',18,25);
+  if(this.mesh?.style==='dense'){
+   const samples=this.mesh.surface_points?.length?this.mesh.surface_points:this.mesh.vertices;
+   const colors=this.mesh.surface_points?.length?this.mesh.surface_colors:this.mesh.colors;
+   const stride=Math.max(1,Math.ceil(samples.length/60000)),dots=[];
+   for(let i=0;i<samples.length;i+=stride){const q=screen(samples[i]);if(!q)continue;
+    const radius=Math.min(22,Math.max(1.2,this.mode==='inside'?(this.mesh.surface_radius||this.radius*.006)*Math.min(w,h)*.8/q[2]:(this.mesh.surface_radius||this.radius*.006)*scale));
+    if(q[0]<-radius||q[0]>w+radius||q[1]<-radius||q[1]>h+radius)continue;
+    dots.push({q,radius,color:colors?.[i]||[.55,.65,.65]});
+   }
+   dots.sort((a,b)=>this.mode==='inside'?b.q[2]-a.q[2]:a.q[2]-b.q[2]);
+   for(const {q,radius,color} of dots){ctx.fillStyle='rgb('+color.map(v=>Math.round(Math.max(0,Math.min(1,v))*255)).join(',')+')';ctx.beginPath();ctx.arc(q[0],q[1],radius,0,Math.PI*2);ctx.fill();}
+  }
+  const pts=this.points.map(p=>{const q=screen(p);return q?[...q,p[3]||1]:null;}).filter(Boolean).sort((a,b)=>a[2]-b[2]);for(const p of (this.mesh?[]:pts)){if(p[0]<0||p[0]>w||p[1]<0||p[1]>h)continue;ctx.fillStyle=p[3]>1?'#b8e8c6':'#86a6bd';ctx.globalAlpha=p[3]>1?.9:.6;ctx.fillRect(p[0],p[1],p[3]>1?2.8:2,p[3]>1?2.8:2);}ctx.globalAlpha=1;
+  this.paths.forEach((route,i)=>{ctx.strokeStyle=['#edba7d','#e99d9d','#90b7ee'][i%3];ctx.lineWidth=1.5;ctx.beginPath();(route.points||[]).forEach((p,j)=>{const q=screen(p);if(!q){ctx.stroke();ctx.beginPath();return;}ctx.lineTo(q[0],q[1]);});ctx.stroke();});if(this.mesh){
+   ctx.fillStyle='#659b77';ctx.globalAlpha=.35;
+   for(const point of (this.mesh.style==='dense'?[]:this.mesh.floor_points||[])){const q=screen(point);if(q)ctx.fillRect(q[0]-2,q[1]-2,4,4);}ctx.globalAlpha=1;
+   for(const object of this.mesh.objects||[]){
+    const corners=Array.from({length:8},(_,i)=>screen([0,1,2].map(axis=>(i&(1<<axis))?object.max[axis]:object.min[axis])));
+    ctx.strokeStyle='#edba7d';ctx.lineWidth=1;ctx.setLineDash(object.support<2?[4,4]:[]);
+    for(let i=0;i<8;i++)for(let axis=0;axis<3;axis++){const j=i^(1<<axis);if(j<i||!corners[i]||!corners[j])continue;ctx.beginPath();ctx.moveTo(...corners[i].slice(0,2));ctx.lineTo(...corners[j].slice(0,2));ctx.stroke();}ctx.setLineDash([]);
+    const q=screen(object.center);if(q){ctx.fillStyle='#fff0cd';ctx.font='13px system-ui';ctx.fillText(object.label+(object.support<2?' (tentative)':''),q[0],q[1]);}
+   }
+  }ctx.fillStyle=this.mesh?.style==='dense'?'#344b50':'#819baa';ctx.font='12px system-ui';ctx.fillText(this.points.length?'OBSERVED GEOMETRY · experimental alignment':'No saved geometry yet',18,25);
  }
 }
 poll();setInterval(poll,3000);

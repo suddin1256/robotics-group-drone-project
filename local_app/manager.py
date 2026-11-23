@@ -32,9 +32,11 @@ class Manager:
             row['recording']=self.store.one('recordings',row['recording_id']) if row.get('recording_id') else None
             row['dashboard_url']=f'http://127.0.0.1:{self.port}/';row['dashboard_ready']=False
             try:
-                with urlopen(row['dashboard_url']+'control.json',timeout=.3) as f:row['control']=json.load(f)
+                with urlopen(row['dashboard_url']+'control.json',timeout=1) as f:row['control']=json.load(f)
                 row['dashboard_ready']=True
             except Exception:pass
+            try:row['playback']=json.loads((Path(row['runtime'])/'live/playback.json').read_text())
+            except (OSError,ValueError):pass
             try:row['log_tail']=Path(row['log']).read_text(errors='replace')[-4500:]
             except OSError:row['log_tail']=''
             return row

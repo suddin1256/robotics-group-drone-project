@@ -73,8 +73,7 @@ class FrameBridge(Node):
             message, desired_encoding="bgr8"
         )
         if frame.shape != (240, 320, 3):
-            self.get_logger().error("Expected 320x240 colour images")
-            return
+            frame=cv2.resize(frame,(320,240),interpolation=cv2.INTER_AREA)
 
         timestamp = (
             message.header.stamp.sec
